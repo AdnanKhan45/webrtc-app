@@ -8,6 +8,7 @@ import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.AppCompatImageButton
+import com.example.webrtcapp.webrtc.AudioController
 import com.example.webrtcapp.webrtc.LocalPreviewController
 import org.webrtc.SurfaceViewRenderer
 
@@ -24,27 +25,32 @@ class MainActivity : AppCompatActivity() {
 
     // WebRTC
     private lateinit var previewController: LocalPreviewController
+    private lateinit var audioController: AudioController
 
     // Simple UI state
     private var isFront = true
     private var isCameraEnabled = true
-    private var isMicEnabled = true // stub until we add real audio capture
+    private var isMicEnabled = true   // now backed by AudioController
 
     private val requestPermissions =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
             val cameraGranted = grants[CAMERA] == true
             val micGranted = grants[RECORD_AUDIO] == true
+
             if (cameraGranted) {
-                statusText.text = if (micGranted) {
-                    "Permissions granted. Starting preview…"
-                } else {
-                    "Camera granted (mic denied). Starting preview…"
-                }
                 startPreviewSafely()
-                refreshIcons()
-            } else {
-                statusText.text = "Camera permission denied. Cannot start preview."
             }
+            if (micGranted && isMicEnabled) {
+                // Start mic only if user intends mic ON
+                ensureAudioStarted()
+            }
+
+            statusText.text = when {
+                cameraGranted && micGranted -> "Permissions granted. Starting preview/audio…"
+                cameraGranted && !micGranted -> "Camera granted (mic denied). Preview started."
+                else -> "Camera permission denied. Cannot start preview."
+            }
+            refreshIcons()
         }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -63,17 +69,25 @@ class MainActivity : AppCompatActivity() {
         val rtcDeps = (applicationContext as App).rtcDeps
         previewController = LocalPreviewController(applicationContext, rtcDeps)
         previewController.attachRenderer(localPreview, mirror = true)
+        audioController = AudioController(rtcDeps)
 
         // ----- listeners -----
         btnToggleMic.setOnClickListener {
-            // UI-only for now; we’ll wire to real audio track later.
-            isMicEnabled = !isMicEnabled
-            statusText.text = if (isMicEnabled) "Mic: ON (stub)" else "Mic: OFF (stub)"
+            // If no permission, request it first
+            if (!hasMicPermission()) {
+                requestPermissions.launch(arrayOf(CAMERA, RECORD_AUDIO))
+                statusText.text = "Requesting microphone permission…"
+                return@setOnClickListener
+            }
+
+            // Ensure audio is started, then toggle enabled state
+            ensureAudioStarted()
+            isMicEnabled = audioController.toggle()
+            statusText.text = if (isMicEnabled) "Mic: ON" else "Mic: OFF"
             refreshIcons()
         }
 
         btnToggleCamera.setOnClickListener {
-            // Toggle camera: stop/start the capturer.
             isCameraEnabled = !isCameraEnabled
             if (isCameraEnabled) {
                 startPreviewSafely()
@@ -86,7 +100,6 @@ class MainActivity : AppCompatActivity() {
         }
 
         btnFlipCamera.setOnClickListener {
-            // Flip: stop capture then restart with opposite facing, and adjust mirroring.
             isFront = !isFront
             previewController.stop()
             previewController.attachRenderer(localPreview, mirror = isFront)
@@ -95,14 +108,16 @@ class MainActivity : AppCompatActivity() {
         }
 
         btnEnd.setOnClickListener {
-            // For now: end preview (later this will end a call).
+            // Treat as “end session” locally: stop video + audio
             previewController.stop()
-            statusText.text = "Preview ended."
+            audioController.stop()
             isCameraEnabled = false
+            isMicEnabled = false
+            statusText.text = "Preview/audio ended."
             refreshIcons()
         }
 
-        // Ask permissions / start preview
+        // Ask permissions / start preview + (optionally) audio
         ensurePermissionsThenStart()
         refreshIcons()
     }
@@ -112,34 +127,44 @@ class MainActivity : AppCompatActivity() {
         if (hasCameraPermission() && isCameraEnabled) {
             startPreviewSafely()
         }
+        if (hasMicPermission() && isMicEnabled) {
+            ensureAudioStarted()
+        }
     }
 
     override fun onStop() {
         super.onStop()
+        // Stop capture when not visible; restart in onStart
         previewController.stop()
-        statusText.text = "Preview stopped (app not visible)."
+        audioController.stop()
+        statusText.text = "Preview/audio stopped (app not visible)."
     }
 
     override fun onDestroy() {
         super.onDestroy()
         previewController.release()
+        audioController.stop()
     }
 
     // ---------- helpers ----------
 
     private fun ensurePermissionsThenStart() {
-        if (hasCameraPermission() && hasMicPermission()) {
-            statusText.text = "Permissions already granted. Starting preview…"
-            startPreviewSafely()
-        } else {
+        val needsCamera = !hasCameraPermission()
+        val needsMic = !hasMicPermission()
+        if (needsCamera || needsMic) {
             requestPermissions.launch(arrayOf(CAMERA, RECORD_AUDIO))
             statusText.text = "Requesting permissions…"
+        } else {
+            // Both granted already
+            if (isCameraEnabled) startPreviewSafely()
+            if (isMicEnabled) ensureAudioStarted()
+            statusText.text = "Ready."
         }
     }
 
     private fun startPreviewSafely() {
         try {
-            if (isCameraEnabled) {
+            if (isCameraEnabled && hasCameraPermission()) {
                 previewController.start(front = isFront, width = 1280, height = 720, fps = 30)
                 statusText.text = "Local preview running."
             }
@@ -148,11 +173,23 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun ensureAudioStarted() {
+        try {
+            // Start the track if it's not started yet; do NOT change enabled state here.
+            if (audioController.trackOrNull() == null) {
+                audioController.start()
+            }
+        } catch (t: Throwable) {
+            statusText.text = "Failed to start audio: ${t.message}"
+            isMicEnabled = false
+        }
+    }
+
     /**
      * Swap icons to reflect current state.
-     * Make sure you have these drawables imported:
-     *  - ic_mic, ic_mic_off
-     *  - ic_videocam (or ic_video_cam), ic_videocam_off (or ic_video_cam_off)
+     * Make sure you have these drawables:
+     *   ic_mic, ic_mic_off
+     *   ic_videocam (or ic_video_cam), ic_videocam_off (or ic_video_cam_off)
      */
     private fun refreshIcons() {
         // Mic
@@ -160,19 +197,17 @@ class MainActivity : AppCompatActivity() {
             if (isMicEnabled) R.drawable.ic_mic else R.drawable.ic_mic_off
         )
 
-        // Camera
-        // If your asset is ic_video_cam(_off) instead of ic_videocam(_off), change references accordingly.
-        val camOn = resources.getIdentifier("ic_videocam", "drawable", packageName)
-        val camOff = resources.getIdentifier("ic_videocam_off", "drawable", packageName)
-        if (camOn != 0 && camOff != 0) {
-            btnToggleCamera.setImageResource(if (isCameraEnabled) camOn else camOff)
-        } else {
-            // Fallback to alternative naming
-            val altOn = resources.getIdentifier("ic_video_cam", "drawable", packageName)
-            val altOff = resources.getIdentifier("ic_video_cam_off", "drawable", packageName)
-            if (altOn != 0 && altOff != 0) {
-                btnToggleCamera.setImageResource(if (isCameraEnabled) altOn else altOff)
-            }
+        // Camera (handle both naming variants)
+        val on1 = resources.getIdentifier("ic_videocam", "drawable", packageName)
+        val off1 = resources.getIdentifier("ic_videocam_off", "drawable", packageName)
+        val onAlt = resources.getIdentifier("ic_video_cam", "drawable", packageName)
+        val offAlt = resources.getIdentifier("ic_video_cam_off", "drawable", packageName)
+
+        when {
+            on1 != 0 && off1 != 0 ->
+                btnToggleCamera.setImageResource(if (isCameraEnabled) on1 else off1)
+            onAlt != 0 && offAlt != 0 ->
+                btnToggleCamera.setImageResource(if (isCameraEnabled) onAlt else offAlt)
         }
     }
 
