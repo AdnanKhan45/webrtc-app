@@ -24,6 +24,12 @@ import org.webrtc.VideoTrack
 import android.util.Log
 import android.widget.FrameLayout
 
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.updatePadding
+import kotlin.math.max
+
+
 class CallActivity : androidx.appcompat.app.AppCompatActivity() {
 
     companion object {
@@ -97,6 +103,15 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
         primaryRenderer = findViewById(R.id.primaryRenderer)
         pipCard = findViewById(R.id.pipCard)
         pipRenderer = findViewById(R.id.pipRenderer)
+
+        val controls = findViewById<androidx.constraintlayout.widget.ConstraintLayout>(R.id.callControls)
+        ViewCompat.setOnApplyWindowInsetsListener(controls) { v, insets ->
+            val sys = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            // 20dp minimum, or system inset if larger
+            val minBottom = (20 * resources.displayMetrics.density).toInt()
+            v.updatePadding(bottom = max(sys.bottom, minBottom))
+            insets
+        }
 
         val rtcDeps = (applicationContext as App).rtcDeps
 

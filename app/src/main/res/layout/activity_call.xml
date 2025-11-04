@@ -45,76 +45,79 @@
         android:padding="6dp" />
 
     <!-- Bottom control bar (unchanged) -->
+    <!-- Bottom control bar -->
     <androidx.constraintlayout.widget.ConstraintLayout
         android:id="@+id/callControls"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_gravity="bottom"
-        android:paddingTop="8dp"
-        android:paddingBottom="8dp"
         android:paddingStart="16dp"
-        android:paddingEnd="16dp">
+        android:paddingEnd="16dp"
+        android:paddingTop="8dp"
+        android:paddingBottom="30dp"
+        android:clipToPadding="false">
 
-        <androidx.appcompat.widget.AppCompatImageButton
-            android:id="@+id/btnToggleMic"
-            android:layout_width="56dp"
-            android:layout_height="56dp"
-            android:padding="8dp"
-            android:background="?attr/selectableItemBackgroundBorderless"
-            android:contentDescription="Toggle microphone"
-            android:scaleType="centerInside"
-            app:srcCompat="@drawable/ic_mic"
-            app:tint="@android:color/black"
-            app:layout_constraintTop_toTopOf="parent"
-            app:layout_constraintBottom_toBottomOf="parent"
-            app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintEnd_toStartOf="@id/btnToggleCamera"
-            app:layout_constraintHorizontal_chainStyle="spread_inside" />
+    <androidx.appcompat.widget.AppCompatImageButton
+        android:id="@+id/btnToggleMic"
+        android:layout_width="56dp"
+        android:layout_height="56dp"
+        android:background="@drawable/bg_call_control_ripple"
+        android:padding="8dp"
+        android:contentDescription="Toggle microphone"
+        android:scaleType="centerInside"
+        app:srcCompat="@drawable/ic_mic"
+        app:tint="@android:color/white"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toStartOf="@id/btnToggleCamera"
+        app:layout_constraintHorizontal_chainStyle="spread_inside" />
 
-        <androidx.appcompat.widget.AppCompatImageButton
-            android:id="@+id/btnToggleCamera"
-            android:layout_width="56dp"
-            android:layout_height="56dp"
-            android:padding="8dp"
-            android:background="?attr/selectableItemBackgroundBorderless"
-            android:contentDescription="Toggle camera"
-            android:scaleType="centerInside"
-            app:srcCompat="@drawable/ic_video_cam"
-            app:tint="@android:color/black"
-            app:layout_constraintTop_toTopOf="parent"
-            app:layout_constraintBottom_toBottomOf="parent"
-            app:layout_constraintStart_toEndOf="@id/btnToggleMic"
-            app:layout_constraintEnd_toStartOf="@id/btnFlipCamera" />
+    <androidx.appcompat.widget.AppCompatImageButton
+        android:id="@+id/btnToggleCamera"
+        android:layout_width="56dp"
+        android:layout_height="56dp"
+        android:background="@drawable/bg_call_control_ripple"
+        android:padding="8dp"
+        android:contentDescription="Toggle camera"
+        android:scaleType="centerInside"
+        app:srcCompat="@drawable/ic_video_cam"
+        app:tint="@android:color/white"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toEndOf="@id/btnToggleMic"
+        app:layout_constraintEnd_toStartOf="@id/btnFlipCamera" />
 
-        <androidx.appcompat.widget.AppCompatImageButton
-            android:id="@+id/btnFlipCamera"
-            android:layout_width="56dp"
-            android:layout_height="56dp"
-            android:padding="8dp"
-            android:background="?attr/selectableItemBackgroundBorderless"
-            android:contentDescription="Flip camera"
-            android:scaleType="centerInside"
-            app:srcCompat="@drawable/ic_flip_camera_android"
-            app:tint="@android:color/black"
-            app:layout_constraintTop_toTopOf="parent"
-            app:layout_constraintBottom_toBottomOf="parent"
-            app:layout_constraintStart_toEndOf="@id/btnToggleCamera"
-            app:layout_constraintEnd_toStartOf="@id/btnEnd" />
+    <androidx.appcompat.widget.AppCompatImageButton
+        android:id="@+id/btnFlipCamera"
+        android:layout_width="56dp"
+        android:layout_height="56dp"
+        android:background="@drawable/bg_call_control_ripple"
+        android:padding="8dp"
+        android:contentDescription="Flip camera"
+        android:scaleType="centerInside"
+        app:srcCompat="@drawable/ic_flip_camera_android"
+        app:tint="@android:color/white"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toEndOf="@id/btnToggleCamera"
+        app:layout_constraintEnd_toStartOf="@id/btnEnd" />
 
-        <androidx.appcompat.widget.AppCompatImageButton
-            android:id="@+id/btnEnd"
-            android:layout_width="56dp"
-            android:layout_height="56dp"
-            android:padding="8dp"
-            android:background="?attr/selectableItemBackgroundBorderless"
-            android:contentDescription="End call"
-            android:scaleType="centerInside"
-            app:srcCompat="@drawable/ic_call_end"
-            app:tint="@android:color/holo_red_dark"
-            app:layout_constraintTop_toTopOf="parent"
-            app:layout_constraintBottom_toBottomOf="parent"
-            app:layout_constraintEnd_toEndOf="parent"
-            app:layout_constraintStart_toEndOf="@id/btnFlipCamera" />
+    <androidx.appcompat.widget.AppCompatImageButton
+        android:id="@+id/btnEnd"
+        android:layout_width="56dp"
+        android:layout_height="56dp"
+        android:background="@drawable/bg_call_control_ripple"
+        android:padding="8dp"
+        android:contentDescription="End call"
+        android:scaleType="centerInside"
+        app:srcCompat="@drawable/ic_call_end"
+        app:tint="@android:color/holo_red_light"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toEndOf="@id/btnFlipCamera" />
+
     </androidx.constraintlayout.widget.ConstraintLayout>
 
 </FrameLayout>
