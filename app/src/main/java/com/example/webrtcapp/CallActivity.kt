@@ -64,6 +64,10 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
     // State for which feed is primary
     private var primaryShowsRemote = true
 
+    private var lastIceState: PeerConnection.IceConnectionState? = null
+    private val uiHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private var finishOnRedRunnable: Runnable? = null
+
     // Media & RTC
     private lateinit var previewController: LocalPreviewController
     private lateinit var audioController: AudioController
@@ -228,6 +232,9 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
                 // Colors: grey=idle, amber=connecting, green=connected, red=problem
                 override fun onIceConnectionStateChange(state: PeerConnection.IceConnectionState) {
                     runOnUiThread {
+                        lastIceState = state
+
+                        // color the dot (keep your colors)
                         when (state) {
                             PeerConnection.IceConnectionState.NEW,
                             PeerConnection.IceConnectionState.CHECKING  -> setQualityColor(R.color.md_amber_500)
@@ -239,9 +246,19 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
                             else -> setQualityColor(R.color.md_grey_500)
                         }
 
+                        // start/stop the timer as you already do
                         if (state == PeerConnection.IceConnectionState.CONNECTED ||
                             state == PeerConnection.IceConnectionState.COMPLETED) {
+                            cancelFinishOnRed()
                             maybeStartTimer()
+                        }
+
+                        // When we turn "red", schedule finishing the Activity
+                        if (state == PeerConnection.IceConnectionState.DISCONNECTED ||
+                            state == PeerConnection.IceConnectionState.FAILED ||
+                            state == PeerConnection.IceConnectionState.CLOSED) {
+                            stopTimerIfRunning()
+                            scheduleFinishOnRed() // 1.2s grace; tweak if you want instant: scheduleFinishOnRed(0)
                         }
                     }
                 }
@@ -292,6 +309,7 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        cancelFinishOnRed()
         offerListener?.remove(); offerListener = null
         answerListener?.remove(); answerListener = null
         remoteCandsListener?.remove(); remoteCandsListener = null
@@ -618,5 +636,30 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
     private fun setQualityColor(@androidx.annotation.ColorRes colorRes: Int) {
         val color = ContextCompat.getColor(this, colorRes)
         ViewCompat.setBackgroundTintList(qualityDot, ColorStateList.valueOf(color))
+    }
+
+    private fun scheduleFinishOnRed(delayMs: Long = 1200L) {
+        cancelFinishOnRed()
+        finishOnRedRunnable = Runnable {
+            // Only finish if we're still "red"
+            if (lastIceState == PeerConnection.IceConnectionState.DISCONNECTED ||
+                lastIceState == PeerConnection.IceConnectionState.FAILED ||
+                lastIceState == PeerConnection.IceConnectionState.CLOSED) {
+                // Do not write anything to Firestore; just close locally
+                stopTimerIfRunning()
+                try { offerListener?.remove() } catch (_: Throwable) {}
+                try { answerListener?.remove() } catch (_: Throwable) {}
+                try { remoteCandsListener?.remove() } catch (_: Throwable) {}
+                rtcClient.close()
+                previewController.stop()
+                audioController.stop()
+                if (!isFinishing && !isDestroyed) finish()
+            }
+        }.also { uiHandler.postDelayed(it, delayMs) }
+    }
+
+    private fun cancelFinishOnRed() {
+        finishOnRedRunnable?.let { uiHandler.removeCallbacks(it) }
+        finishOnRedRunnable = null
     }
 }
