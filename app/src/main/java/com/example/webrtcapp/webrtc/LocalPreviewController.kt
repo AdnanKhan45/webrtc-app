@@ -2,6 +2,7 @@ package com.example.webrtcapp.webrtc
 
 import android.content.Context
 import org.webrtc.Camera2Enumerator
+import org.webrtc.CameraVideoCapturer
 import org.webrtc.EglBase
 import org.webrtc.SurfaceTextureHelper
 import org.webrtc.SurfaceViewRenderer
@@ -134,4 +135,52 @@ class LocalPreviewController(
         // Keep renderer lifecycle with the View; we only clear our reference
         renderer = null
     }
+
+    // New methods
+    @Synchronized fun pause() {
+        try { videoCapturer?.stopCapture() } catch (_: Throwable) {}
+        videoTrack?.setEnabled(false)  // local pause, still attached to sender
+    }
+
+    @Synchronized fun resume(width: Int = 1280, height: Int = 720, fps: Int = 30) {
+        videoTrack?.setEnabled(true)
+        try { videoCapturer?.startCapture(width, height, fps) } catch (_: Throwable) {}
+    }
+
+    @Synchronized
+    fun switchCamera(useFront: Boolean) {
+        val cam = videoCapturer as? CameraVideoCapturer ?: return
+        val enumerator = Camera2Enumerator(appContext)
+        val target = enumerator.deviceNames.firstOrNull { name ->
+            if (useFront) enumerator.isFrontFacing(name) else enumerator.isBackFacing(name)
+        }
+
+        // Update local mirror immediately (no need to reattach renderer)
+        renderer?.setMirror(useFront)
+
+        if (target != null) {
+            cam.switchCamera(
+                object : CameraVideoCapturer.CameraSwitchHandler {
+                    override fun onCameraSwitchDone(isFrontCamera: Boolean) { /* optional: log */ }
+                    override fun onCameraSwitchError(error: String) { /* optional: log */ }
+                },
+                target
+            )
+        } else {
+            // Fallback: toggle to “next” camera if we didn't find a named match
+            cam.switchCamera(object : CameraVideoCapturer.CameraSwitchHandler {
+                override fun onCameraSwitchDone(isFrontCamera: Boolean) {}
+                override fun onCameraSwitchError(error: String) {}
+            })
+        }
+        // NOTE: we do NOT dispose or recreate VideoSource/VideoTrack.
+        // If a device needs it, you can optionally restart capture on the same track:
+        // try { cam.stopCapture(); cam.startCapture(1280, 720, 30) } catch (_: Throwable) {}
+    }
+
+    /**
+     * Expose the currently active local VideoTrack (null if not started yet).
+     * RtcClient will use this to send video over the PeerConnection.
+     */
+    fun videoTrackOrNull(): VideoTrack? = videoTrack
 }

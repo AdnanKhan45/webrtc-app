@@ -1,0 +1,30 @@
+{
+  "project_info": {
+    "project_number": "961658697067",
+    "firebase_url": "https://web-rtc-app-df363-default-rtdb.firebaseio.com",
+    "project_id": "web-rtc-app-df363",
+    "storage_bucket": "web-rtc-app-df363.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:961658697067:android:cafb2ab26cc1086cb6c82e",
+        "android_client_info": {
+          "package_name": "com.example.webrtcapp"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBaR8F1YIe-mTQJQ8Vc6gEZ1Yd-5oOnhas"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
