@@ -3,18 +3,21 @@ package com.example.webrtcapp
 import android.content.Intent
 import android.os.Bundle
 import android.widget.Button
-import android.widget.EditText
 import android.widget.TextView
+import com.google.android.material.textfield.TextInputEditText
+import com.google.android.material.textfield.TextInputLayout
 import androidx.appcompat.app.AppCompatActivity
-import com.example.webrtcapp.CallActivity
 import com.google.firebase.FirebaseApp
 import com.google.firebase.auth.FirebaseAuth
 import java.util.UUID
+import com.google.android.material.appbar.MaterialToolbar
+
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var titleText: TextView
-    private lateinit var callIdInput: EditText
+    private lateinit var callIdLayout: TextInputLayout
+    private lateinit var callIdInput: TextInputEditText
     private lateinit var btnStartCaller: Button
     private lateinit var btnStartCallee: Button
     private lateinit var statusText: TextView
@@ -25,15 +28,24 @@ class MainActivity : AppCompatActivity() {
 
         // ---- views ----
         titleText = findViewById(R.id.titleText)
+        callIdLayout = findViewById(R.id.callIdLayout)
         callIdInput = findViewById(R.id.callIdInput)
         btnStartCaller = findViewById(R.id.btnStartCaller)
         btnStartCallee = findViewById(R.id.btnStartCallee)
         statusText = findViewById(R.id.statusText)
 
+        // Add a custom end icon to randomize Call ID
+        callIdLayout.endIconMode = TextInputLayout.END_ICON_CUSTOM
+        callIdLayout.setEndIconDrawable(R.drawable.ic_dice) // add a dice vector; or swap for any icon
+        callIdLayout.setEndIconOnClickListener {
+            callIdInput.setText(defaultCallId())
+            callIdInput.setSelection(callIdInput.text?.length ?: 0)
+        }
+
         // ---- Firebase (explicit init + anonymous auth for dev) ----
         FirebaseApp.initializeApp(this)
         FirebaseAuth.getInstance().signInAnonymously()
-            .addOnSuccessListener { statusText.text = "Signed in (anonymous)" }
+            .addOnSuccessListener { statusText.text = "Signed in" }
             .addOnFailureListener { statusText.text = "Auth failed: ${it.message}" }
 
         // Pre-fill a callId for convenience
@@ -50,6 +62,21 @@ class MainActivity : AppCompatActivity() {
             val callId = normalizedCallId()
             startCall(callId, role = "callee")
         }
+
+        val topBar = findViewById<MaterialToolbar>(R.id.topBar)
+        topBar.setOnMenuItemClickListener { menuItem ->
+            when (menuItem.itemId) {
+                R.id.action_random -> {
+                    callIdInput.setText(defaultCallId())
+                    true
+                }
+                R.id.action_about -> {
+                    statusText.text = "WebRTC demo • Material 3 UI"
+                    true
+                }
+                else -> false
+            }
+        }
     }
 
     private fun normalizedCallId(): String {
@@ -63,7 +90,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startCall(callId: String, role: String) {
-        statusText.text = "Launching Call ($role)…"
+        statusText.text = if (role == "caller") "Starting…" else "Joining…"
         val intent = Intent(this, CallActivity::class.java).apply {
             putExtra(CallActivity.EXTRA_CALL_ID, callId)
             putExtra(CallActivity.EXTRA_ROLE, role)
