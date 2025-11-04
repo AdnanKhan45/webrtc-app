@@ -4,6 +4,7 @@ import android.content.Intent
 import android.os.Bundle
 import android.widget.Button
 import android.widget.TextView
+import android.content.Context
 import com.google.android.material.textfield.TextInputEditText
 import com.google.android.material.textfield.TextInputLayout
 import androidx.appcompat.app.AppCompatActivity
@@ -11,6 +12,8 @@ import com.google.firebase.FirebaseApp
 import com.google.firebase.auth.FirebaseAuth
 import java.util.UUID
 import com.google.android.material.appbar.MaterialToolbar
+
+
 
 
 class MainActivity : AppCompatActivity() {
@@ -21,6 +24,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnStartCaller: Button
     private lateinit var btnStartCallee: Button
     private lateinit var statusText: TextView
+
+    private lateinit var nameLayout: TextInputLayout
+    private lateinit var nameInput: TextInputEditText
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -33,6 +39,8 @@ class MainActivity : AppCompatActivity() {
         btnStartCaller = findViewById(R.id.btnStartCaller)
         btnStartCallee = findViewById(R.id.btnStartCallee)
         statusText = findViewById(R.id.statusText)
+        nameLayout = findViewById(R.id.nameLayout)
+        nameInput = findViewById(R.id.nameInput)
 
         // Add a custom end icon to randomize Call ID
         callIdLayout.endIconMode = TextInputLayout.END_ICON_CUSTOM
@@ -41,6 +49,13 @@ class MainActivity : AppCompatActivity() {
             callIdInput.setText(defaultCallId())
             callIdInput.setSelection(callIdInput.text?.length ?: 0)
         }
+
+        // Prefill name from SharedPreferences
+        val prefs = getSharedPreferences("webrtc_prefs", Context.MODE_PRIVATE)
+        nameInput.setText(prefs.getString("display_name", ""))
+
+        // (Optional) end icon on name to clear
+        nameLayout.endIconMode = TextInputLayout.END_ICON_CLEAR_TEXT
 
         // ---- Firebase (explicit init + anonymous auth for dev) ----
         FirebaseApp.initializeApp(this)
@@ -90,10 +105,17 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startCall(callId: String, role: String) {
+        val displayName = nameInput.text?.toString()?.trim().orEmpty()
+
+        // Save name for next time
+        getSharedPreferences("webrtc_prefs", Context.MODE_PRIVATE)
+            .edit().putString("display_name", displayName).apply()
+
         statusText.text = if (role == "caller") "Starting…" else "Joining…"
         val intent = Intent(this, CallActivity::class.java).apply {
             putExtra(CallActivity.EXTRA_CALL_ID, callId)
             putExtra(CallActivity.EXTRA_ROLE, role)
+            putExtra("displayName", displayName)
         }
         startActivity(intent)
     }

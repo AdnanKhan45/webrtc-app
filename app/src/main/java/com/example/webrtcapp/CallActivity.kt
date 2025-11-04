@@ -23,11 +23,12 @@ import org.webrtc.SurfaceViewRenderer
 import org.webrtc.VideoTrack
 import android.util.Log
 import android.widget.FrameLayout
-
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.updatePadding
 import kotlin.math.max
+import android.widget.Chronometer
+import com.google.firebase.firestore.FirebaseFirestore
 
 
 class CallActivity : androidx.appcompat.app.AppCompatActivity() {
@@ -44,6 +45,14 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
     private lateinit var btnToggleCamera: AppCompatImageButton
     private lateinit var btnFlipCamera: AppCompatImageButton
     private lateinit var btnEnd: AppCompatImageButton
+    private lateinit var remoteNameText: TextView
+    private lateinit var callTimer: Chronometer
+    private lateinit var qualityBars: TextView
+
+    private var remoteDisplayName: String = "Unknown"
+    private var localDisplayName: String = ""
+
+    private var timerStarted = false
 
     // Renderers
     private lateinit var primaryRenderer: SurfaceViewRenderer
@@ -94,6 +103,22 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
         callId = intent.getStringExtra(EXTRA_CALL_ID) ?: error("Missing callId")
         role = intent.getStringExtra(EXTRA_ROLE) ?: error("Missing role (caller|callee)")
 
+        FirebaseFirestore.getInstance()
+            .collection("calls")
+            .document(callId)
+            .addSnapshotListener { snap, _ ->
+                val caller = (snap?.get("caller") as? Map<*, *>)
+                val callee = (snap?.get("callee") as? Map<*, *>)
+                val callerName = caller?.get("displayName") as? String
+                val calleeName = callee?.get("displayName") as? String
+
+                remoteDisplayName = when (role) {
+                    "caller" -> calleeName ?: "Callee"
+                    "callee" -> callerName ?: "Caller"
+                    else -> "Peer"
+                }
+                remoteNameText.text = remoteDisplayName
+            }
         // Views
         statusText = findViewById(R.id.statusText)
         btnToggleMic = findViewById(R.id.btnToggleMic)
@@ -103,6 +128,12 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
         primaryRenderer = findViewById(R.id.primaryRenderer)
         pipCard = findViewById(R.id.pipCard)
         pipRenderer = findViewById(R.id.pipRenderer)
+
+        remoteNameText = findViewById(R.id.remoteNameText)
+        callTimer = findViewById(R.id.callTimer)
+        qualityBars = findViewById(R.id.qualityBars)
+
+        localDisplayName = intent.getStringExtra("displayName") ?: "Me"
 
         val controls = findViewById<androidx.constraintlayout.widget.ConstraintLayout>(R.id.callControls)
         ViewCompat.setOnApplyWindowInsetsListener(controls) { v, insets ->
@@ -161,6 +192,7 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
                                 vt.addSink(pipRenderer)
                             }
                             statusText.text = "Remote video"
+                            maybeStartTimer()
                         }
                     } else {
                         runOnUiThread { statusText.text = "Remote ${track?.kind() ?: "track"}" }
@@ -168,11 +200,38 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
                 }
 
                 override fun onConnectionStateChange(state: PeerConnection.PeerConnectionState) {
-                    runOnUiThread { statusText.text = "PC: $state" }
+                    runOnUiThread {
+                        statusText.text = "PC: $state"
+                        if (state == PeerConnection.PeerConnectionState.CONNECTED) {
+                            maybeStartTimer()
+                        }
+                        if (state == PeerConnection.PeerConnectionState.DISCONNECTED ||
+                            state == PeerConnection.PeerConnectionState.FAILED ||
+                            state == PeerConnection.PeerConnectionState.CLOSED) {
+                            stopTimerIfRunning()
+                        }
+                    }
                 }
 
                 override fun onIceConnectionStateChange(state: PeerConnection.IceConnectionState) {
-                    runOnUiThread { statusText.text = "ICE: $state" }
+                    runOnUiThread {
+                        statusText.text = "ICE: $state"
+
+                        val bars = when (state) {
+                            PeerConnection.IceConnectionState.CONNECTED,
+                            PeerConnection.IceConnectionState.COMPLETED -> "▮▮▮"
+                            PeerConnection.IceConnectionState.CHECKING -> "▮▮○"
+                            PeerConnection.IceConnectionState.DISCONNECTED -> "▮○○"
+                            PeerConnection.IceConnectionState.FAILED -> "○○○"
+                            else -> "○○○"
+                        }
+                        qualityBars.text = bars
+
+                        if (state == PeerConnection.IceConnectionState.CONNECTED ||
+                            state == PeerConnection.IceConnectionState.COMPLETED) {
+                            maybeStartTimer()
+                        }
+                    }
                 }
             }
         )
@@ -300,7 +359,10 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
         val uid = FirebaseAuth.getInstance().currentUser?.uid
             ?: run { statusText.text = "Not signed in"; return }
 
-        val me = CallRepository.Participant(uid)
+        val me = CallRepository.Participant(
+            uid = uid,
+            displayName = localDisplayName.ifBlank { null }
+        )
 
         when (role) {
             "caller" -> startAsCaller(me)
@@ -413,6 +475,9 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
     // ---------- hangup ----------
 
     private fun hangup(reason: String?) {
+
+        stopTimerIfRunning()
+
         offerListener?.remove(); offerListener = null
         answerListener?.remove(); answerListener = null
         remoteCandsListener?.remove(); remoteCandsListener = null
@@ -532,6 +597,21 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
             previewController.movePreviewTo(primaryRenderer, mirror = isFront)
             primaryRenderer.setMirror(isFront)
             pipRenderer.setMirror(false)
+        }
+    }
+
+    private fun maybeStartTimer() {
+        if (!timerStarted) {
+            callTimer.base = android.os.SystemClock.elapsedRealtime()
+            callTimer.start()
+            timerStarted = true
+        }
+    }
+
+    private fun stopTimerIfRunning() {
+        if (timerStarted) {
+            try { callTimer.stop() } catch (_: Throwable) {}
+            timerStarted = false
         }
     }
 }
