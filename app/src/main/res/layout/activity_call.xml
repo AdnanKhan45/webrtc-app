@@ -6,19 +6,30 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent">
 
-    <!-- Remote video fills the screen -->
+    <!-- Primary video fills the screen (remote by default) -->
     <org.webrtc.SurfaceViewRenderer
-        android:id="@+id/remoteRenderer"
+        android:id="@+id/primaryRenderer"
         android:layout_width="match_parent"
         android:layout_height="match_parent" />
 
-    <!-- Local preview as picture-in-picture (top-right) -->
-    <org.webrtc.SurfaceViewRenderer
-        android:id="@+id/localRenderer"
+    <!-- Local preview in a rounded card (PIP) -->
+    <com.google.android.material.card.MaterialCardView
+        android:id="@+id/pipCard"
         android:layout_width="120dp"
         android:layout_height="200dp"
         android:layout_gravity="top|end"
-        android:layout_margin="12dp" />
+        android:layout_margin="12dp"
+        android:clipToOutline="true"
+        app:cardCornerRadius="16dp"
+        app:cardUseCompatPadding="true"
+        app:strokeWidth="0dp"
+        app:cardElevation="0dp">
+
+        <org.webrtc.SurfaceViewRenderer
+            android:id="@+id/pipRenderer"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+    </com.google.android.material.card.MaterialCardView>
 
     <!-- Status overlay (top-left) -->
     <TextView
@@ -33,7 +44,7 @@
         android:textColor="@android:color/white"
         android:padding="6dp" />
 
-    <!-- Bottom control bar (icon-only, transparent bg, perfectly even spacing) -->
+    <!-- Bottom control bar (unchanged) -->
     <androidx.constraintlayout.widget.ConstraintLayout
         android:id="@+id/callControls"
         android:layout_width="match_parent"
@@ -104,7 +115,6 @@
             app:layout_constraintBottom_toBottomOf="parent"
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintStart_toEndOf="@id/btnFlipCamera" />
-
     </androidx.constraintlayout.widget.ConstraintLayout>
 
 </FrameLayout>

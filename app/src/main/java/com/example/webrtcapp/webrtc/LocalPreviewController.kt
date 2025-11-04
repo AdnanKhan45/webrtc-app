@@ -41,19 +41,28 @@ class LocalPreviewController(
      * Bind a SurfaceViewRenderer (from your XML) to WebRTC EGL.
      * Safe to call multiple times; re-inits if needed.
      */
-    fun attachRenderer(view: SurfaceViewRenderer, mirror: Boolean = true) {
-        // If we previously had a renderer, detach sinks first.
+    fun attachRenderer(
+        view: SurfaceViewRenderer,
+        mirror: Boolean = true,
+        overlay: Boolean = true
+    ) {
+        // Detach from old renderer if any
         videoTrack?.removeSink(renderer)
         renderer?.release()
 
         renderer = view.apply {
+            if (overlay) {
+                // Must be set BEFORE init() for SurfaceViewRenderer
+                setZOrderMediaOverlay(true)
+                setZOrderOnTop(false)
+            }
             init(eglContext, /* rendererEvents = */ null)
             setMirror(mirror)
             setEnableHardwareScaler(true)
-            setZOrderMediaOverlay(false)
+            // keep not on top; overlay above primary is enough
         }
 
-        // If a track already exists (e.g., attach after start), connect it.
+        // Reattach existing track to the new renderer
         videoTrack?.addSink(renderer)
     }
 
@@ -176,6 +185,19 @@ class LocalPreviewController(
         // NOTE: we do NOT dispose or recreate VideoSource/VideoTrack.
         // If a device needs it, you can optionally restart capture on the same track:
         // try { cam.stopCapture(); cam.startCapture(1280, 720, 30) } catch (_: Throwable) {}
+    }
+
+    @Synchronized
+    fun movePreviewTo(newRenderer: SurfaceViewRenderer, mirror: Boolean) {
+        if (renderer === newRenderer) {
+            renderer?.setMirror(mirror)
+            return
+        }
+        // Detach from old renderer, attach to new — no init(), no release()
+        videoTrack?.removeSink(renderer)
+        renderer = newRenderer
+        renderer?.setMirror(mirror)
+        videoTrack?.addSink(renderer)
     }
 
     /**

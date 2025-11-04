@@ -22,6 +22,7 @@ import org.webrtc.SessionDescription
 import org.webrtc.SurfaceViewRenderer
 import org.webrtc.VideoTrack
 import android.util.Log
+import android.widget.FrameLayout
 
 class CallActivity : androidx.appcompat.app.AppCompatActivity() {
 
@@ -31,15 +32,21 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
         private const val TAG = "CallActivity"
     }
 
-
     // UI
     private lateinit var statusText: TextView
     private lateinit var btnToggleMic: AppCompatImageButton
     private lateinit var btnToggleCamera: AppCompatImageButton
     private lateinit var btnFlipCamera: AppCompatImageButton
     private lateinit var btnEnd: AppCompatImageButton
-    private lateinit var localRenderer: SurfaceViewRenderer
-    private lateinit var remoteRenderer: SurfaceViewRenderer
+
+    // Renderers
+    private lateinit var primaryRenderer: SurfaceViewRenderer
+    private lateinit var pipCard: com.google.android.material.card.MaterialCardView
+    private lateinit var pipRenderer: SurfaceViewRenderer
+    private var remoteVideoTrack: VideoTrack? = null
+
+    // State for which feed is primary
+    private var primaryShowsRemote = true
 
     // Media & RTC
     private lateinit var previewController: LocalPreviewController
@@ -87,21 +94,23 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
         btnToggleCamera = findViewById(R.id.btnToggleCamera)
         btnFlipCamera = findViewById(R.id.btnFlipCamera)
         btnEnd = findViewById(R.id.btnEnd)
-        localRenderer = findViewById(R.id.localRenderer)
-        remoteRenderer = findViewById(R.id.remoteRenderer)
+        primaryRenderer = findViewById(R.id.primaryRenderer)
+        pipCard = findViewById(R.id.pipCard)
+        pipRenderer = findViewById(R.id.pipRenderer)
 
         val rtcDeps = (applicationContext as App).rtcDeps
 
-        // Local preview controller
+        // PRIMARY (fullscreen) usually shows remote
+        primaryRenderer.init(rtcDeps.eglBase.eglBaseContext, null)
+        primaryRenderer.setMirror(false)
+
+        // Local preview controller targets the PIP by default
         previewController = LocalPreviewController(applicationContext, rtcDeps)
-        previewController.attachRenderer(localRenderer, mirror = true)
-
-        // Prepare remote renderer explicitly
-        remoteRenderer.init(rtcDeps.eglBase.eglBaseContext, null)
-        remoteRenderer.setMirror(false)
-
+        previewController.attachRenderer(pipRenderer, mirror = true, overlay = true)
         // Audio
         audioController = AudioController(rtcDeps)
+
+        enablePipDragAndTap()
 
         // PeerConnection
         val iceServers = listOf(
@@ -121,14 +130,23 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
                     repo.addLocalCandidate(callId, role, candidate)
                 }
 
-                override fun onRemoteTrack(
-                    receiver: org.webrtc.RtpReceiver,
-                    transceiver: org.webrtc.RtpTransceiver
-                ) {
+                override fun onRemoteTrack(receiver: org.webrtc.RtpReceiver, transceiver: org.webrtc.RtpTransceiver) {
                     val track = receiver.track()
                     if (track != null && track.kind() == "video") {
-                        (track as? VideoTrack)?.addSink(remoteRenderer)
-                        runOnUiThread { statusText.text = "Remote video" }
+                        val vt = track as? VideoTrack ?: return
+                        runOnUiThread {
+                            remoteVideoTrack = vt
+
+                            // Always (re)bind to the right target immediately
+                            vt.removeSink(primaryRenderer)
+                            vt.removeSink(pipRenderer)
+                            if (primaryShowsRemote) {
+                                vt.addSink(primaryRenderer)
+                            } else {
+                                vt.addSink(pipRenderer)
+                            }
+                            statusText.text = "Remote video"
+                        }
                     } else {
                         runOnUiThread { statusText.text = "Remote ${track?.kind() ?: "track"}" }
                     }
@@ -198,8 +216,10 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
         remoteCandsListener?.remove(); remoteCandsListener = null
         rtcClient.close()
         previewController.release()
-        try { remoteRenderer.release() } catch (_: Throwable) {}
+        try { pipRenderer.release() } catch (_: Throwable) {}
     }
+
+
 
     // ---------- permissions & media ----------
 
@@ -400,6 +420,103 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
         } else {
             Log.e(TAG, "Firestore error: ${t.message}", t)
             runOnUiThread { statusText.text = "Firestore error: ${t.message}" }
+        }
+    }
+
+    private fun enablePipDragAndTap() {
+        var downX = 0f
+        var downY = 0f
+        var dX = 0f
+        var dY = 0f
+        var dragged = false
+        val touchSlop = 8 * resources.displayMetrics.density
+
+        pipCard.setOnTouchListener { v, event ->
+            val parent = findViewById<FrameLayout>(R.id.callRoot)
+            when (event.actionMasked) {
+                android.view.MotionEvent.ACTION_DOWN -> {
+                    downX = event.rawX
+                    downY = event.rawY
+                    dX = v.x - event.rawX
+                    dY = v.y - event.rawY
+                    dragged = false
+                    true
+                }
+                android.view.MotionEvent.ACTION_MOVE -> {
+                    val newX = event.rawX + dX
+                    val newY = event.rawY + dY
+                    if (!dragged && (kotlin.math.abs(event.rawX - downX) > touchSlop ||
+                                kotlin.math.abs(event.rawY - downY) > touchSlop)) {
+                        dragged = true
+                    }
+                    // clamp within parent
+                    val maxX = parent.width - v.width
+                    val maxY = parent.height - v.height - findViewById<androidx.constraintlayout.widget.ConstraintLayout>(R.id.callControls).height
+                    v.x = newX.coerceIn(0f, maxX.toFloat())
+                    v.y = newY.coerceIn(0f, maxY.coerceAtLeast(0).toFloat())
+                    true
+                }
+                android.view.MotionEvent.ACTION_UP -> {
+                    if (!dragged) {
+                        // Treat as click -> swap
+                        swapPrimaryAndPip()
+                    } else {
+                        snapPipToNearestCorner()
+                    }
+                    true
+                }
+                else -> false
+            }
+        }
+        // Also allow tapping the card (for accessibility / keyboard)
+        pipCard.setOnClickListener { swapPrimaryAndPip() }
+    }
+
+    private fun snapPipToNearestCorner() {
+        val parent = findViewById<FrameLayout>(R.id.callRoot)
+        val v = pipCard
+        val margin = 12 * resources.displayMetrics.density
+        val corners = listOf(
+            0f + margin to 0f + margin, // top-start
+            parent.width - v.width - margin to 0f + margin, // top-end
+            0f + margin to parent.height - v.height - margin - findViewById<androidx.constraintlayout.widget.ConstraintLayout>(R.id.callControls).height, // bottom-start (above controls)
+            parent.width - v.width - margin to parent.height - v.height - margin - findViewById<androidx.constraintlayout.widget.ConstraintLayout>(R.id.callControls).height // bottom-end
+        )
+        val current = android.graphics.PointF(v.x, v.y)
+        val nearest = corners.minByOrNull { (cx, cy) ->
+            val dx = current.x - cx
+            val dy = current.y - cy
+            dx*dx + dy*dy
+        } ?: return
+        v.animate()
+            .x(nearest.first.coerceAtLeast(0f))
+            .y(nearest.second.coerceAtLeast(0f))
+            .setDuration(180)
+            .start()
+    }
+
+    private fun swapPrimaryAndPip() {
+        primaryShowsRemote = !primaryShowsRemote
+        statusText.text = if (primaryShowsRemote) "Remote is primary" else "Local is primary"
+
+        // 1) Remote: move sinks now
+        remoteVideoTrack?.let { vt ->
+            vt.removeSink(primaryRenderer)
+            vt.removeSink(pipRenderer)
+            if (primaryShowsRemote) vt.addSink(primaryRenderer) else vt.addSink(pipRenderer)
+        }
+
+        // 2) Local: move preview to the other renderer now
+        if (primaryShowsRemote) {
+            // Remote -> primary, Local -> pip
+            previewController.movePreviewTo(pipRenderer, mirror = true)
+            primaryRenderer.setMirror(false)
+            pipRenderer.setMirror(true)
+        } else {
+            // Remote -> pip, Local -> primary
+            previewController.movePreviewTo(primaryRenderer, mirror = isFront)
+            primaryRenderer.setMirror(isFront)
+            pipRenderer.setMirror(false)
         }
     }
 }
