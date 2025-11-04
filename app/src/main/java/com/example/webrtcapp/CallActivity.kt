@@ -6,10 +6,7 @@ import android.os.Build
 import android.os.Bundle
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.AppCompatImageButton
-import com.example.webrtcapp.App
-import com.example.webrtcapp.R
 import com.example.webrtcapp.signaling.CallRepository
 import com.example.webrtcapp.webrtc.AudioController
 import com.example.webrtcapp.webrtc.LocalPreviewController
@@ -22,6 +19,7 @@ import org.webrtc.SessionDescription
 import org.webrtc.SurfaceViewRenderer
 import org.webrtc.VideoTrack
 import android.util.Log
+import android.view.View
 import android.widget.FrameLayout
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -29,6 +27,8 @@ import androidx.core.view.updatePadding
 import kotlin.math.max
 import android.widget.Chronometer
 import com.google.firebase.firestore.FirebaseFirestore
+import android.content.res.ColorStateList
+import androidx.core.content.ContextCompat
 
 
 class CallActivity : androidx.appcompat.app.AppCompatActivity() {
@@ -40,20 +40,21 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
     }
 
     // UI
-    private lateinit var statusText: TextView
     private lateinit var btnToggleMic: AppCompatImageButton
     private lateinit var btnToggleCamera: AppCompatImageButton
     private lateinit var btnFlipCamera: AppCompatImageButton
     private lateinit var btnEnd: AppCompatImageButton
     private lateinit var remoteNameText: TextView
     private lateinit var callTimer: Chronometer
-    private lateinit var qualityBars: TextView
+    private lateinit var qualityDot: View
 
     private var remoteDisplayName: String = "Unknown"
     private var localDisplayName: String = ""
 
     private var timerStarted = false
 
+    private lateinit var topOverlay: android.widget.LinearLayout
+    private var topSafePx: Int = 0
     // Renderers
     private lateinit var primaryRenderer: SurfaceViewRenderer
     private lateinit var pipCard: com.google.android.material.card.MaterialCardView
@@ -120,7 +121,6 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
                 remoteNameText.text = remoteDisplayName
             }
         // Views
-        statusText = findViewById(R.id.statusText)
         btnToggleMic = findViewById(R.id.btnToggleMic)
         btnToggleCamera = findViewById(R.id.btnToggleCamera)
         btnFlipCamera = findViewById(R.id.btnFlipCamera)
@@ -131,20 +131,36 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
 
         remoteNameText = findViewById(R.id.remoteNameText)
         callTimer = findViewById(R.id.callTimer)
-        qualityBars = findViewById(R.id.qualityBars)
+        qualityDot = findViewById(R.id.qualityDot)
 
         localDisplayName = intent.getStringExtra("displayName") ?: "Me"
 
         val controls = findViewById<androidx.constraintlayout.widget.ConstraintLayout>(R.id.callControls)
         ViewCompat.setOnApplyWindowInsetsListener(controls) { v, insets ->
             val sys = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-            // 20dp minimum, or system inset if larger
             val minBottom = (20 * resources.displayMetrics.density).toInt()
             v.updatePadding(bottom = max(sys.bottom, minBottom))
             insets
         }
 
         val rtcDeps = (applicationContext as App).rtcDeps
+
+
+        topOverlay = findViewById(R.id.topOverlay)
+        ViewCompat.setOnApplyWindowInsetsListener(topOverlay) { v, insets ->
+            val sys = insets.getInsets(WindowInsetsCompat.Type.statusBars())
+            val extra = (8 * resources.displayMetrics.density).toInt()
+            v.setPadding(v.paddingLeft, sys.top + extra, v.paddingRight, v.paddingBottom)
+            insets
+        }
+
+        topOverlay.post {
+            val statusTop = ViewCompat.getRootWindowInsets(topOverlay)
+                ?.getInsets(WindowInsetsCompat.Type.statusBars())
+                ?.top ?: 0
+            val margin = (12 * resources.displayMetrics.density).toInt()
+            topSafePx = statusTop + topOverlay.height + margin
+        }
 
         // PRIMARY (fullscreen) usually shows remote
         primaryRenderer.init(rtcDeps.eglBase.eglBaseContext, null)
@@ -191,17 +207,13 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
                             } else {
                                 vt.addSink(pipRenderer)
                             }
-                            statusText.text = "Remote video"
                             maybeStartTimer()
                         }
-                    } else {
-                        runOnUiThread { statusText.text = "Remote ${track?.kind() ?: "track"}" }
                     }
                 }
 
                 override fun onConnectionStateChange(state: PeerConnection.PeerConnectionState) {
                     runOnUiThread {
-                        statusText.text = "PC: $state"
                         if (state == PeerConnection.PeerConnectionState.CONNECTED) {
                             maybeStartTimer()
                         }
@@ -213,19 +225,19 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
                     }
                 }
 
+                // Colors: grey=idle, amber=connecting, green=connected, red=problem
                 override fun onIceConnectionStateChange(state: PeerConnection.IceConnectionState) {
                     runOnUiThread {
-                        statusText.text = "ICE: $state"
-
-                        val bars = when (state) {
+                        when (state) {
+                            PeerConnection.IceConnectionState.NEW,
+                            PeerConnection.IceConnectionState.CHECKING  -> setQualityColor(R.color.md_amber_500)
                             PeerConnection.IceConnectionState.CONNECTED,
-                            PeerConnection.IceConnectionState.COMPLETED -> "▮▮▮"
-                            PeerConnection.IceConnectionState.CHECKING -> "▮▮○"
-                            PeerConnection.IceConnectionState.DISCONNECTED -> "▮○○"
-                            PeerConnection.IceConnectionState.FAILED -> "○○○"
-                            else -> "○○○"
+                            PeerConnection.IceConnectionState.COMPLETED -> setQualityColor(R.color.md_green_500)
+                            PeerConnection.IceConnectionState.DISCONNECTED -> setQualityColor(R.color.md_red_400)
+                            PeerConnection.IceConnectionState.FAILED,
+                            PeerConnection.IceConnectionState.CLOSED -> setQualityColor(R.color.md_red_500)
+                            else -> setQualityColor(R.color.md_grey_500)
                         }
-                        qualityBars.text = bars
 
                         if (state == PeerConnection.IceConnectionState.CONNECTED ||
                             state == PeerConnection.IceConnectionState.COMPLETED) {
@@ -240,14 +252,12 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
         btnToggleMic.setOnClickListener {
             if (!hasPermission(RECORD_AUDIO)) {
                 requestPerms.launch(arrayOf(CAMERA, RECORD_AUDIO))
-                statusText.text = "Requesting microphone permission…"
                 return@setOnClickListener
             }
             ensureAudioStarted()
             val newEnabled = audioController.toggle()
             isMicEnabled = newEnabled
             rtcClient.setLocalAudioEnabled(newEnabled)
-            statusText.text = if (newEnabled) "Mic: ON" else "Mic: OFF"
             refreshIcons()
         }
 
@@ -255,10 +265,8 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
             isCameraEnabled = !isCameraEnabled
             if (isCameraEnabled) {
                 previewController.resume()
-                statusText.text = "Camera: ON"
             } else {
                 previewController.pause()
-                statusText.text = "Camera: OFF"
             }
             rtcClient.setLocalVideoEnabled(isCameraEnabled)
             refreshIcons()
@@ -267,7 +275,6 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
         btnFlipCamera.setOnClickListener {
             isFront = !isFront
             previewController.switchCamera(isFront)
-            statusText.text = if (isFront) "Using FRONT camera" else "Using BACK camera"
         }
 
         btnEnd.setOnClickListener { hangup("local_hangup") }
@@ -316,7 +323,7 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
                 previewController.start(front = isFront, width = 1280, height = 720, fps = 30)
             }
         } catch (t: Throwable) {
-            statusText.text = "Camera error: ${t.message}"
+            isCameraEnabled = false
         }
     }
 
@@ -326,7 +333,6 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
                 if (audioController.trackOrNull() == null) audioController.start()
             }
         } catch (t: Throwable) {
-            statusText.text = "Mic error: ${t.message}"
             isMicEnabled = false
         }
     }
@@ -335,7 +341,6 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
         try {
             if (audioController.trackOrNull() == null) audioController.start()
         } catch (t: Throwable) {
-            statusText.text = "Mic error: ${t.message}"
             isMicEnabled = false
         }
     }
@@ -357,7 +362,7 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
 
     private fun startSignalingIfReady() {
         val uid = FirebaseAuth.getInstance().currentUser?.uid
-            ?: run { statusText.text = "Not signed in"; return }
+            ?: run { return }
 
         val me = CallRepository.Participant(
             uid = uid,
@@ -367,13 +372,11 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
         when (role) {
             "caller" -> startAsCaller(me)
             "callee" -> startAsCallee(me)
-            else -> statusText.text = "Invalid role: $role"
         }
     }
 
     private fun startAsCaller(me: CallRepository.Participant) {
         repo.createCall(callId, me)
-        statusText.text = "Calling… ($callId)"
 
         rtcClient.ensureRecvTransceivers()
         rtcClient.createLocalOfferAndSet(
@@ -388,11 +391,9 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
                         rtcClient.setRemoteAnswer(
                             answer,
                             onComplete = {
-                                runOnUiThread { statusText.text = "Answered" }
                                 answerListener?.remove(); answerListener = null
                             },
                             onError = { e ->
-                                runOnUiThread { statusText.text = "setRemoteAnswer error: ${e.message}" }
                             }
                         )
                     },
@@ -400,7 +401,6 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
                 )
             },
             onError = { e -> runOnUiThread {
-                statusText.text = "Offer error: ${e.message}"
                 logIndexHint(e)
 
             } }
@@ -410,7 +410,7 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
             callId,
             from = "callee",
             onCandidate = { rtcClient.addRemoteIceCandidate(it) },
-            onError = { e -> runOnUiThread { statusText.text = "Cand listen err: ${e.message}"
+            onError = { e -> runOnUiThread {
 
                 logIndexHint(e)} }
         )
@@ -418,7 +418,6 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
 
     private fun startAsCallee(me: CallRepository.Participant) {
         repo.joinCall(callId, me)
-        statusText.text = "Waiting for offer… ($callId)"
 
         offerListener = repo.listenOffer(
             callId,
@@ -431,11 +430,9 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
                     offer = offer,
                     onSuccess = { answer ->
                         repo.setAnswer(callId, answer)
-                        runOnUiThread { statusText.text = "Answered" }
                         offerListener?.remove(); offerListener = null
                     },
                     onError = { e ->
-                        runOnUiThread { statusText.text = "Answer error: ${e.message}" }
                     }
                 )
             },
@@ -446,7 +443,7 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
             callId,
             from = "caller",
             onCandidate = { rtcClient.addRemoteIceCandidate(it) },
-            onError = { e -> runOnUiThread { statusText.text = "Cand listen err: ${e.message}"
+            onError = { e -> runOnUiThread {
 
                 logIndexHint(e)} }
         )
@@ -496,10 +493,8 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
         val url = Regex("(https://console\\.firebase\\.google\\.com/\\S+)").find(msg)?.value
         if (url != null) {
             Log.e(TAG, "Firestore needs a composite index. Tap this: $url")
-            runOnUiThread { statusText.text = "Firestore index required (see Logcat)" }
         } else {
             Log.e(TAG, "Firestore error: ${t.message}", t)
-            runOnUiThread { statusText.text = "Firestore error: ${t.message}" }
         }
     }
 
@@ -530,10 +525,12 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
                         dragged = true
                     }
                     // clamp within parent
+                    val controlsH = findViewById<androidx.constraintlayout.widget.ConstraintLayout>(R.id.callControls).height
                     val maxX = parent.width - v.width
-                    val maxY = parent.height - v.height - findViewById<androidx.constraintlayout.widget.ConstraintLayout>(R.id.callControls).height
+                    val maxY = parent.height - v.height - controlsH
+// keep PIP below top overlay safe area
                     v.x = newX.coerceIn(0f, maxX.toFloat())
-                    v.y = newY.coerceIn(0f, maxY.coerceAtLeast(0).toFloat())
+                    v.y = newY.coerceIn(topSafePx.toFloat(), maxY.coerceAtLeast(topSafePx).toFloat())
                     true
                 }
                 android.view.MotionEvent.ACTION_UP -> {
@@ -556,11 +553,15 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
         val parent = findViewById<FrameLayout>(R.id.callRoot)
         val v = pipCard
         val margin = 12 * resources.displayMetrics.density
+        val controlsH = findViewById<androidx.constraintlayout.widget.ConstraintLayout>(R.id.callControls).height
+        val topY = topSafePx.toFloat()
+        val bottomY = parent.height - v.height - margin - controlsH
+
         val corners = listOf(
-            0f + margin to 0f + margin, // top-start
-            parent.width - v.width - margin to 0f + margin, // top-end
-            0f + margin to parent.height - v.height - margin - findViewById<androidx.constraintlayout.widget.ConstraintLayout>(R.id.callControls).height, // bottom-start (above controls)
-            parent.width - v.width - margin to parent.height - v.height - margin - findViewById<androidx.constraintlayout.widget.ConstraintLayout>(R.id.callControls).height // bottom-end
+            margin to topY,                                 // top-start
+            parent.width - v.width - margin to topY,       // top-end
+            margin to bottomY,                              // bottom-start
+            parent.width - v.width - margin to bottomY     // bottom-end
         )
         val current = android.graphics.PointF(v.x, v.y)
         val nearest = corners.minByOrNull { (cx, cy) ->
@@ -577,7 +578,6 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
 
     private fun swapPrimaryAndPip() {
         primaryShowsRemote = !primaryShowsRemote
-        statusText.text = if (primaryShowsRemote) "Remote is primary" else "Local is primary"
 
         // 1) Remote: move sinks now
         remoteVideoTrack?.let { vt ->
@@ -613,5 +613,10 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
             try { callTimer.stop() } catch (_: Throwable) {}
             timerStarted = false
         }
+    }
+
+    private fun setQualityColor(@androidx.annotation.ColorRes colorRes: Int) {
+        val color = ContextCompat.getColor(this, colorRes)
+        ViewCompat.setBackgroundTintList(qualityDot, ColorStateList.valueOf(color))
     }
 }

@@ -12,91 +12,70 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent" />
 
+    <!-- Top overlay: full width, fixed opaque black, safe-area padding applied in code -->
+    <LinearLayout
+        android:id="@+id/topOverlay"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp"
+        android:paddingTop="8dp"
+        android:paddingBottom="8dp"
+        android:background="#B3000000"
+    android:layout_gravity="top">
+
+    <TextView
+        android:id="@+id/remoteNameText"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:maxLines="1"
+        android:ellipsize="end"
+        android:text="Peer"
+        android:textColor="@android:color/white"
+        android:textStyle="bold"
+        android:textSize="16sp" />
+
+    <Chronometer
+        android:id="@+id/callTimer"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="8dp"
+        android:textColor="@android:color/white"
+        android:textSize="14sp" />
+
+    <!-- Colored status dot -->
+    <View
+        android:id="@+id/qualityDot"
+        android:layout_width="10dp"
+        android:layout_height="10dp"
+        android:layout_marginStart="10dp"
+        android:background="@drawable/quality_dot"
+        android:importantForAccessibility="no" />
+</LinearLayout>
+
     <!-- Local preview in a rounded card (PIP) -->
     <com.google.android.material.card.MaterialCardView
         android:id="@+id/pipCard"
         android:layout_width="120dp"
         android:layout_height="200dp"
         android:layout_gravity="top|end"
-        android:layout_margin="12dp"
-        android:clipToOutline="true"
-        app:cardCornerRadius="16dp"
-        app:cardUseCompatPadding="true"
-        app:strokeWidth="0dp"
-        app:cardElevation="0dp">
+        android:layout_marginEnd="12dp"
+        android:layout_marginTop="84dp"
+    android:clipToOutline="true"
+    app:cardCornerRadius="16dp"
+    app:cardUseCompatPadding="true"
+    app:strokeWidth="0dp"
+    app:cardElevation="0dp">
 
-        <org.webrtc.SurfaceViewRenderer
-            android:id="@+id/pipRenderer"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent" />
-    </com.google.android.material.card.MaterialCardView>
-
-    <!-- Call header (name, timer, quality) -->
-    <LinearLayout
-        android:id="@+id/callHeader"
+    <org.webrtc.SurfaceViewRenderer
+        android:id="@+id/pipRenderer"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_gravity="top"
-        android:orientation="horizontal"
-        android:paddingStart="12dp"
-        android:paddingEnd="12dp"
-        android:paddingTop="10dp"
-        android:gravity="center_vertical">
+        android:layout_height="match_parent" />
+</com.google.android.material.card.MaterialCardView>
 
-        <!-- Remote display name (left) -->
-        <TextView
-            android:id="@+id/remoteNameText"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="…"
-            android:textSize="16sp"
-            android:textStyle="bold"
-            android:textColor="@android:color/white"
-            android:background="#33000000"
-            android:padding="6dp"
-            android:ellipsize="end"
-            android:maxLines="1" />
-
-        <!-- Timer (center-ish) -->
-        <Chronometer
-            android:id="@+id/callTimer"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="8dp"
-            android:layout_marginEnd="8dp"
-            android:textColor="@android:color/white"
-            android:textSize="14sp"
-            android:background="#33000000"
-            android:padding="6dp" />
-
-        <!-- Quality bars (right) -->
-        <TextView
-            android:id="@+id/qualityBars"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="▮▮▮"
-            android:textColor="@android:color/white"
-            android:textSize="14sp"
-            android:background="#33000000"
-            android:padding="6dp" />
-    </LinearLayout>
-
-    <!-- Status overlay (top-left) -->
-    <TextView
-        android:id="@+id/statusText"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_gravity="bottom|start"
-        android:layout_marginStart="12dp"
-        android:layout_marginBottom="96dp"
-        android:text="Connecting…"
-        android:textSize="14sp"
-        android:background="#66000000"
-        android:textColor="@android:color/white"
-        android:padding="6dp" />
-
-    <!-- Bottom control bar (unchanged) -->
     <!-- Bottom control bar -->
     <androidx.constraintlayout.widget.ConstraintLayout
         android:id="@+id/callControls"
