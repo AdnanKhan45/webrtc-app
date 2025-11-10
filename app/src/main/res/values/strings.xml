@@ -1,3 +1,12 @@
 <resources>
     <string name="app_name">WebRTCApp</string>
+    <string name="incoming_call_from">Incoming call from %1$s</string>
+    <string name="action_accept">Accept</string>
+    <string name="action_decline">Decline</string>
+    <string name="status_ringing">Ringing…</string>
+    <string name="status_missed">Missed</string>
+    <string name="caller_avatar">Caller avatar</string>
+    <string name="caller_unknown">Unknown caller</string>
+    <string name="call_id_fmt">Call ID: %1$s</string>
+    <string name="action_call">Call</string>
 </resources>

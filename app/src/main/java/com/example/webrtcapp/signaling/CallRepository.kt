@@ -78,18 +78,18 @@ class CallRepository(
         "createdAt" to FieldValue.serverTimestamp()
     )
 
-    private fun fromSdpDTO(map: Map<String, Any?>?): SessionDescription? {
+    private fun fromSdpDTO(map: Map<*, *>?): SessionDescription? {
         if (map == null) return null
         val typeStr = map["type"] as? String ?: return null
-        val sdp = map["sdp"] as? String ?: return null
-        val type = SessionDescription.Type.fromCanonicalForm(typeStr)
+        val sdp     = map["sdp"] as? String ?: return null
+        val type    = SessionDescription.Type.fromCanonicalForm(typeStr)
         return SessionDescription(type, sdp)
     }
 
-    private fun fromCandidateDTO(map: Map<String, Any?>): IceCandidate? {
-        val sdpMid = map["sdpMid"] as? String ?: return null
-        val sdpMLineIndex = (map["sdpMLineIndex"] as? Number)?.toInt() ?: 0
-        val candidate = map["candidate"] as? String ?: return null
+    private fun fromCandidateDTO(map: Map<*, *>): IceCandidate? {
+        val sdpMid        = map["sdpMid"] as? String ?: return null
+        val sdpMLineIndex = (map["sdpMLineIndex"] as? Number)?.toInt() ?: return null
+        val candidate     = map["candidate"] as? String ?: return null
         return IceCandidate(sdpMid, sdpMLineIndex, candidate)
     }
 
@@ -139,7 +139,7 @@ class CallRepository(
     ): ListenerRegistration =
         callDoc(callId).addSnapshotListener { snap, e ->
             if (e != null) { onError(e); return@addSnapshotListener }
-            val offer = fromSdpDTO(snap?.get("offer") as? Map<String, Any?>)
+            val offer  = fromSdpDTO(snap?.get("offer")  as? Map<*, *>)
             if (offer != null) onOffer(offer)
         }
 
@@ -151,7 +151,7 @@ class CallRepository(
     ): ListenerRegistration =
         callDoc(callId).addSnapshotListener { snap, e ->
             if (e != null) { onError(e); return@addSnapshotListener }
-            val answer = fromSdpDTO(snap?.get("answer") as? Map<String, Any?>)
+            val answer = fromSdpDTO(snap?.get("answer") as? Map<*, *>)
             if (answer != null) onAnswer(answer)
         }
 
@@ -201,8 +201,7 @@ class CallRepository(
                 for (doc in snap.documentChanges) {
                     // Only act on ADDED changes to avoid re-adding old ones
                     if (doc.type == com.google.firebase.firestore.DocumentChange.Type.ADDED) {
-                        fromCandidateDTO(doc.document.data)?.let(onCandidate)
-                    }
+                        fromCandidateDTO(doc.document.data as Map<*, *>)?.let(onCandidate)                    }
                 }
             }
 }

@@ -29,6 +29,8 @@ import android.widget.Chronometer
 import com.google.firebase.firestore.FirebaseFirestore
 import android.content.res.ColorStateList
 import androidx.core.content.ContextCompat
+import com.example.webrtcapp.App
+
 
 
 class CallActivity : androidx.appcompat.app.AppCompatActivity() {
@@ -36,6 +38,8 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
     companion object {
         const val EXTRA_CALL_ID = "callId"
         const val EXTRA_ROLE = "role" // "caller" or "callee"
+        const val EXTRA_CALLEE_UID = "extra_callee_uid" // "caller" or "callee"
+        const val EXTRA_CALLEE_NAME = "extra_callee_name"
         private const val TAG = "CallActivity"
     }
 
@@ -105,8 +109,30 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_call)
 
+        // Views
+        btnToggleMic = findViewById(R.id.btnToggleMic)
+        btnToggleCamera = findViewById(R.id.btnToggleCamera)
+        btnFlipCamera = findViewById(R.id.btnFlipCamera)
+        btnEnd = findViewById(R.id.btnEnd)
+        primaryRenderer = findViewById(R.id.primaryRenderer)
+        pipCard = findViewById(R.id.pipCard)
+        pipRenderer = findViewById(R.id.pipRenderer)
+
+        remoteNameText = findViewById(R.id.remoteNameText)
+        callTimer = findViewById(R.id.callTimer)
+        qualityDot = findViewById(R.id.qualityDot)
+
+        localDisplayName = intent.getStringExtra("displayName") ?: "Me"
+
         callId = intent.getStringExtra(EXTRA_CALL_ID) ?: error("Missing callId")
         role = intent.getStringExtra(EXTRA_ROLE) ?: error("Missing role (caller|callee)")
+        val calleeId = intent.getStringExtra(EXTRA_CALLEE_UID) // may be null
+        val calleeNameFromIntent = intent.getStringExtra(EXTRA_CALLEE_NAME) // may be null
+
+        if (role == "caller") {
+            val seed = calleeNameFromIntent?.takeIf { it.isNotBlank() } ?: "Callee"
+            remoteNameText.text = seed
+        }
 
         FirebaseFirestore.getInstance()
             .collection("calls")
@@ -124,20 +150,6 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
                 }
                 remoteNameText.text = remoteDisplayName
             }
-        // Views
-        btnToggleMic = findViewById(R.id.btnToggleMic)
-        btnToggleCamera = findViewById(R.id.btnToggleCamera)
-        btnFlipCamera = findViewById(R.id.btnFlipCamera)
-        btnEnd = findViewById(R.id.btnEnd)
-        primaryRenderer = findViewById(R.id.primaryRenderer)
-        pipCard = findViewById(R.id.pipCard)
-        pipRenderer = findViewById(R.id.pipRenderer)
-
-        remoteNameText = findViewById(R.id.remoteNameText)
-        callTimer = findViewById(R.id.callTimer)
-        qualityDot = findViewById(R.id.qualityDot)
-
-        localDisplayName = intent.getStringExtra("displayName") ?: "Me"
 
         val controls = findViewById<androidx.constraintlayout.widget.ConstraintLayout>(R.id.callControls)
         ViewCompat.setOnApplyWindowInsetsListener(controls) { v, insets ->
@@ -394,16 +406,33 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
     }
 
     private fun startAsCaller(me: CallRepository.Participant) {
+        val calleeId = intent.getStringExtra(EXTRA_CALLEE_UID)
+        val calleeName = intent.getStringExtra(EXTRA_CALLEE_NAME)
+
+        // 1) Create the call with caller info
         repo.createCall(callId, me)
 
+        // 2) Pre-fill callee info (so backend/push can use it)
+        if (!calleeId.isNullOrBlank()) {
+            repo.joinCall(
+                callId,
+                CallRepository.Participant(
+                    uid = calleeId,
+                    displayName = calleeName?.takeIf { it.isNotBlank() }
+                )
+            )
+        }
+
+        // 3) WebRTC offer flow
         rtcClient.ensureRecvTransceivers()
         rtcClient.createLocalOfferAndSet(
-            onSuccess = { offer: SessionDescription ->
+            onSuccess = { offer ->
                 repo.setOffer(callId, offer)
+
                 answerListener = repo.listenAnswer(
                     callId,
                     onAnswer = { answer ->
-                        if (didSetRemoteAnswer) return@listenAnswer  // guard duplicate
+                        if (didSetRemoteAnswer) return@listenAnswer
                         didSetRemoteAnswer = true
 
                         rtcClient.setRemoteAnswer(
@@ -411,26 +440,21 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
                             onComplete = {
                                 answerListener?.remove(); answerListener = null
                             },
-                            onError = { e ->
-                            }
+                            onError = { /* log if needed */ }
                         )
                     },
                     onError = { e -> logIndexHint(e) }
                 )
             },
-            onError = { e -> runOnUiThread {
-                logIndexHint(e)
-
-            } }
+            onError = { e -> runOnUiThread { logIndexHint(e) } }
         )
 
+        // 4) Remote ICE from callee
         remoteCandsListener = repo.listenRemoteCandidates(
             callId,
             from = "callee",
             onCandidate = { rtcClient.addRemoteIceCandidate(it) },
-            onError = { e -> runOnUiThread {
-
-                logIndexHint(e)} }
+            onError = { e -> runOnUiThread { logIndexHint(e) } }
         )
     }
 
