@@ -66,7 +66,7 @@ object PushKeys {
     // Notification channels / IDs
     // -----------------------------
     /** Foreground service channel for ringing UI */
-    const val CHANNEL_RING = "ring"
+    const val CHANNEL_RING = "calls_ring_v2"
     const val CHANNEL_ONGOING = "ongoing"
 
     /** Optional: description text when creating the channel */

@@ -37,49 +37,35 @@ class App : Application() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val nm: NotificationManager = getSystemService() ?: return
 
-        // ---- Ringing channel (loud, full-screen) ----
-        val ringChannel = NotificationChannel(
+        // Fresh silent ring channel (heads-up + fullscreen; app plays sound itself)
+        val ring = NotificationChannel(
             PushKeys.CHANNEL_RING,
             "Incoming Calls",
-            NotificationManager.IMPORTANCE_HIGH // shows heads-up
+            NotificationManager.IMPORTANCE_HIGH
         ).apply {
-            description = "Incoming call alerts (fullscreen + ringtone)"
+            description = "Incoming call alerts (fullscreen; app controls ringtone)"
             lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
             setShowBadge(false)
             enableLights(true)
-            enableVibration(true)
-            // Use the system ringtone stream so users can control it
-            val ringtoneUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
-            setSound(
-                ringtoneUri,
-                AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                    .build()
-            )
-            if (Build.VERSION.SDK_INT >= 29) {
-                setAllowBubbles(true)
-            }
-            if (Build.VERSION.SDK_INT >= 28) {
-                // Hint to the system that this is a "call" surface
-                setBypassDnd(true) // user can still override in settings
-            }
+            enableVibration(false)     // vibration handled by our service
+            setSound(null, null)       // <- SILENT to avoid double audio
+            if (Build.VERSION.SDK_INT >= 29) setAllowBubbles(true)
+            if (Build.VERSION.SDK_INT >= 28) setBypassDnd(true)
         }
 
-        // ---- Ongoing call channel (quiet, foreground service) ----
-        val ongoingChannel = NotificationChannel(
+        val ongoing = NotificationChannel(
             PushKeys.CHANNEL_ONGOING,
             "Ongoing Call",
             NotificationManager.IMPORTANCE_LOW
         ).apply {
-            description = "Status while you are in an active call"
+            description = "While an active call is in progress"
             lockscreenVisibility = android.app.Notification.VISIBILITY_PRIVATE
             setShowBadge(false)
-            setSound(null, null) // silent
+            setSound(null, null)
             enableVibration(false)
         }
 
-        nm.createNotificationChannel(ringChannel)
-        nm.createNotificationChannel(ongoingChannel)
+        nm.createNotificationChannel(ring)
+        nm.createNotificationChannel(ongoing)
     }
 }

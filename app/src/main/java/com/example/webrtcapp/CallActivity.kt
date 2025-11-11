@@ -43,6 +43,7 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
         private const val TAG = "CallActivity"
     }
 
+
     // UI
     private lateinit var btnToggleMic: AppCompatImageButton
     private lateinit var btnToggleCamera: AppCompatImageButton

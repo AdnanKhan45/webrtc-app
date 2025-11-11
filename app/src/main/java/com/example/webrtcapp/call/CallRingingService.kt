@@ -30,7 +30,11 @@ class CallRingingService : Service() {
         const val ACTION_DECLINE    = "webrtcapp.ring.DECLINE"
 
         private const val WAKELOCK_TAG = "webrtcapp:IncomingCallWakelock"
+        @Volatile private var acceptedLaunchedForId: String? = null
         private const val TIMEOUT_MS   = 40_000L
+
+        @Volatile private var activeCallId: String? = null
+        @Volatile private var isRinging: Boolean = false
     }
 
     private var ringtone: Ringtone? = null
@@ -54,13 +58,29 @@ class CallRingingService : Service() {
         when (intent?.action) {
             ACTION_START_RING -> {
                 extractExtras(intent)
+                val id = callId.orEmpty()
+                // --- DEDUPE GUARD ---
+                if (isRinging && activeCallId == id) {
+                    // Same call already ringing → do nothing
+                    return START_NOT_STICKY
+                }
+                if (isRinging && activeCallId != null && activeCallId != id) {
+                    // Different call sneaks in: stop previous first
+                    stopRingingStack()
+                }
+                activeCallId = id
                 startAsForeground()
                 startRingingStack()
                 scheduleTimeout()
             }
             ACTION_ACCEPT -> {
-                extractExtras(intent) // ensure we still have the payload
+                extractExtras(intent)
                 stopRingingStack()
+
+                val id = callId.orEmpty()
+                if (acceptedLaunchedForId == id) return START_NOT_STICKY
+                acceptedLaunchedForId = id
+
                 launchCallAsCallee()
                 stopSelfSafely()
             }
@@ -73,6 +93,7 @@ class CallRingingService : Service() {
         }
         return START_NOT_STICKY
     }
+
 
     override fun onDestroy() {
         cancelTimeout()
@@ -95,7 +116,6 @@ class CallRingingService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or pendingImmutable()
         )
 
-        // Accept goes to CallActionActivity (Activity, not Service)
         val acceptPi = PendingIntent.getActivity(
             this, 1002,
             pack(Intent(this, CallActionActivity::class.java).apply {
@@ -103,8 +123,6 @@ class CallRingingService : Service() {
             }),
             PendingIntent.FLAG_UPDATE_CURRENT or pendingImmutable()
         )
-
-        // Decline goes to CallActionActivity too
         val declinePi = PendingIntent.getActivity(
             this, 1003,
             pack(Intent(this, CallActionActivity::class.java).apply {
@@ -121,16 +139,17 @@ class CallRingingService : Service() {
             .setCategory(NotificationCompat.CATEGORY_CALL)
             .setOngoing(true)
             .setAutoCancel(false)
+            .setOnlyAlertOnce(true)   // <- avoids repeat alerts on update
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .addAction(R.drawable.ic_call_answer, getString(R.string.action_accept), acceptPi)
             .addAction(R.drawable.ic_call_end, getString(R.string.action_decline), declinePi)
             .setFullScreenIntent(fullScreenPi, true)
             .build()
 
-        if (android.os.Build.VERSION.SDK_INT >= 29) {
+        if (Build.VERSION.SDK_INT >= 30) {
             startForeground(
                 PushKeys.NOTIF_ID_RING, notif,
-                android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL
+                android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
             )
         } else {
             startForeground(PushKeys.NOTIF_ID_RING, notif)
@@ -141,7 +160,6 @@ class CallRingingService : Service() {
     private fun updateForegroundText(extraLine: String) {
         val text = getString(R.string.incoming_call_from, callerName ?: "Unknown") + "  •  " + extraLine
 
-        // keep extras in update actions too
         fun pack(i: Intent) = i.apply {
             putExtra(PushKeys.EXTRA_CALL_ID, callId)
             putExtra(PushKeys.EXTRA_CALLER_UID, callerUid)
@@ -150,16 +168,23 @@ class CallRingingService : Service() {
             putExtra(PushKeys.EXTRA_TIMESTAMP, timestamp)
         }
 
-        val replayPi = PendingIntent.getService(
-            this, 1002, pack(Intent(this, CallRingingService::class.java).apply { action = ACTION_ACCEPT }),
-            PendingIntent.FLAG_UPDATE_CURRENT or pendingImmutable()
-        )
-        val declinePi = PendingIntent.getService(
-            this, 1003, pack(Intent(this, CallRingingService::class.java).apply { action = ACTION_DECLINE }),
-            PendingIntent.FLAG_UPDATE_CURRENT or pendingImmutable()
-        )
         val fullPi = PendingIntent.getActivity(
-            this, 1001, pack(Intent(this, com.example.webrtcapp.IncomingCallActivity::class.java)),
+            this, 1001,
+            pack(Intent(this, com.example.webrtcapp.IncomingCallActivity::class.java)),
+            PendingIntent.FLAG_UPDATE_CURRENT or pendingImmutable()
+        )
+        val acceptPi = PendingIntent.getActivity(
+            this, 1002,
+            pack(Intent(this, CallActionActivity::class.java).apply {
+                putExtra(CallActionActivity.EXTRA_ACTION, "accept")
+            }),
+            PendingIntent.FLAG_UPDATE_CURRENT or pendingImmutable()
+        )
+        val declinePi = PendingIntent.getActivity(
+            this, 1003,
+            pack(Intent(this, CallActionActivity::class.java).apply {
+                putExtra(CallActionActivity.EXTRA_ACTION, "decline")
+            }),
             PendingIntent.FLAG_UPDATE_CURRENT or pendingImmutable()
         )
 
@@ -170,15 +195,22 @@ class CallRingingService : Service() {
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setCategory(NotificationCompat.CATEGORY_CALL)
             .setOngoing(true)
-            .setFullScreenIntent(fullPi, true)
-            .addAction(R.drawable.ic_call_answer, getString(R.string.action_accept), replayPi)
+            .setOnlyAlertOnce(true)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .addAction(R.drawable.ic_call_answer, getString(R.string.action_accept), acceptPi)
             .addAction(R.drawable.ic_call_end, getString(R.string.action_decline), declinePi)
+            .setFullScreenIntent(fullPi, true)
             .build()
 
-        try { NotificationManagerCompat.from(this).notify(PushKeys.NOTIF_ID_RING, notif) } catch (_: SecurityException) {}
+        try {
+            NotificationManagerCompat.from(this).notify(PushKeys.NOTIF_ID_RING, notif)
+        } catch (_: SecurityException) {}
     }
 
     private fun startRingingStack() {
+        // If we somehow got here while already ringing, don’t start a 2nd tone
+        if (isRinging) return
+
         audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         val attrs = AudioAttributes.Builder()
             .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
@@ -203,7 +235,7 @@ class CallRingingService : Service() {
         val uri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
         ringtone = RingtoneManager.getRingtone(this, uri)?.apply {
             if (Build.VERSION.SDK_INT >= 21) audioAttributes = attrs
-            play()
+            try { play() } catch (_: Throwable) {}
         }
 
         vibrator = if (Build.VERSION.SDK_INT >= 31) {
@@ -215,14 +247,14 @@ class CallRingingService : Service() {
         val effect = if (Build.VERSION.SDK_INT >= 26) {
             VibrationEffect.createWaveform(longArrayOf(0, 500, 300, 500), 0)
         } else null
-
         if (Build.VERSION.SDK_INT >= 26) {
-            vibrator?.vibrate(effect)
+            try { vibrator?.vibrate(effect) } catch (_: Throwable) {}
         } else {
             @Suppress("DEPRECATION")
-            vibrator?.vibrate(longArrayOf(0, 500, 300, 500), 0)
+            try { vibrator?.vibrate(longArrayOf(0,500,300,500), 0) } catch (_: Throwable) {}
         }
 
+        isRinging = true
         updateForegroundText(getString(R.string.status_ringing))
     }
 
@@ -240,6 +272,8 @@ class CallRingingService : Service() {
         } catch (_: Throwable) {}
         audioManager = null
         releaseWakelock()
+        isRinging = false
+        activeCallId = null
     }
 
     private fun acquireWakelock() {
@@ -259,14 +293,15 @@ class CallRingingService : Service() {
         wakeLock = null
     }
 
+
     private fun launchCallAsCallee() {
         val id = callId ?: return
-        val intent = Intent(this, CallActivity::class.java).apply {
-            putExtra(CallActivity.EXTRA_CALL_ID, id)
-            putExtra(CallActivity.EXTRA_ROLE, "callee")
+        val i = Intent(this, com.example.webrtcapp.CallActivity::class.java).apply {
+            putExtra(com.example.webrtcapp.CallActivity.EXTRA_CALL_ID, id)
+            putExtra(com.example.webrtcapp.CallActivity.EXTRA_ROLE, "callee")
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         }
-        startActivity(intent)
+        startActivity(i)
     }
 
     private fun stopSelfSafely() {
