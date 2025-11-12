@@ -195,11 +195,21 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
         enablePipDragAndTap()
 
         // PeerConnection
-        val iceServers = emptyList<PeerConnection.IceServer>()
+        val iceServers = listOf(
+            PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer()
+            // add more STUN endpoints if you want:
+            // PeerConnection.IceServer.builder("stun:global.stun.twilio.com:3478").createIceServer()
+        )
 
         val rtcConfig = PeerConnection.RTCConfiguration(iceServers).apply {
             sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
             continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUALLY
+
+            // 🔒 Block HOST candidates; keep srflx (from STUN). No TURN since we didn’t configure any.
+            iceTransportsType = PeerConnection.IceTransportsType.NOHOST
+
+            // (optional but recommended) keep it UDP-only and simpler for the experiment
+            tcpCandidatePolicy = PeerConnection.TcpCandidatePolicy.DISABLED
         }
 
         rtcClient = RtcClient(
