@@ -78,6 +78,9 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
     private lateinit var audioController: AudioController
     private lateinit var rtcClient: RtcClient
 
+    private var statsHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private var statsRunnable: Runnable? = null
+
     // Signaling
     private val repo = CallRepository()
     private var offerListener: ListenerRegistration? = null
@@ -192,9 +195,8 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
         enablePipDragAndTap()
 
         // PeerConnection
-        val iceServers = listOf(
-            PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer()
-        )
+        val iceServers = emptyList<PeerConnection.IceServer>()
+
         val rtcConfig = PeerConnection.RTCConfiguration(iceServers).apply {
             sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
             continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUALLY
@@ -264,6 +266,7 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
                             state == PeerConnection.IceConnectionState.COMPLETED) {
                             cancelFinishOnRed()
                             maybeStartTimer()
+                            startStatsLogging()
                         }
 
                         // When we turn "red", schedule finishing the Activity
@@ -271,7 +274,8 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
                             state == PeerConnection.IceConnectionState.FAILED ||
                             state == PeerConnection.IceConnectionState.CLOSED) {
                             stopTimerIfRunning()
-                            scheduleFinishOnRed() // 1.2s grace; tweak if you want instant: scheduleFinishOnRed(0)
+                            scheduleFinishOnRed()
+                            stopStatsLogging()
                         }
                     }
                 }
@@ -686,5 +690,27 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
     private fun cancelFinishOnRed() {
         finishOnRedRunnable?.let { uiHandler.removeCallbacks(it) }
         finishOnRedRunnable = null
+    }
+
+    // --- Add this helper in CallActivity:
+    private fun startStatsLogging() {
+        statsRunnable?.let { statsHandler.removeCallbacks(it) }
+        statsRunnable = object : Runnable {
+            override fun run() {
+                try {
+                    rtcClient.getStats { summary ->
+                        // Print once every 2s
+                        android.util.Log.d("RTC-STATS", summary)
+                    }
+                } catch (_: Throwable) { /* ignore */ }
+                statsHandler.postDelayed(this, 2000)
+            }
+        }
+        statsHandler.postDelayed(statsRunnable!!, 2000)
+    }
+
+    private fun stopStatsLogging() {
+        statsRunnable?.let { statsHandler.removeCallbacks(it) }
+        statsRunnable = null
     }
 }

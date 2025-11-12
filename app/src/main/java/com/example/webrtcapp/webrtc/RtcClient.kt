@@ -264,4 +264,78 @@ class RtcClient(
         override fun onCreateFailure(error: String) = onError(Throwable(error))
         override fun onSetFailure(error: String) = onError(Throwable(error))
     }
+
+    fun getStats(onSummary: (String) -> Unit) {
+        peerConnection.getStats { report ->
+            val stats = report.statsMap
+
+            // === 1) Selected transport & pair
+            val transport = stats.values.firstOrNull { it.type == "transport" }
+            val selPairId = (transport?.members?.get("selectedCandidatePairId") as? String)
+                ?: stats.values.firstOrNull {
+                    it.type == "candidate-pair" &&
+                            ((it.members["nominated"] as? Boolean) == true) &&
+                            ((it.members["state"] as? String) == "succeeded")
+                }?.id
+
+            var pairLine = ""
+            var topoLine = ""
+            if (selPairId != null) {
+                val pair = stats[selPairId]
+                val localId  = pair?.members?.get("localCandidateId")  as? String
+                val remoteId = pair?.members?.get("remoteCandidateId") as? String
+                val local  = localId?.let { stats[it]?.members } ?: emptyMap()
+                val remote = remoteId?.let { stats[it]?.members } ?: emptyMap()
+
+                val localType  = local["candidateType"] as? String ?: "?"
+                val localProto = local["protocol"] as? String ?: "?"
+                val remoteType  = remote["candidateType"] as? String ?: "?"
+                val remoteProto = remote["protocol"] as? String ?: "?"
+
+                val rttSec = (pair?.members?.get("currentRoundTripTime") as? Number)?.toDouble()
+                val outBr  = (pair?.members?.get("availableOutgoingBitrate") as? Number)?.toDouble()
+
+                pairLine = "PAIR=${selPairId} rtt=${if (rttSec != null) "%.3fs".format(rttSec) else "n/a"} " +
+                        "outKbps=${if (outBr != null) ((outBr / 1000.0).toInt()) else -1}"
+                topoLine = "LOCAL[$localType/$localProto] REMOTE[$remoteType/$remoteProto]"
+            }
+
+            // === 2) Media RTP stats
+            var outVideoLine = ""
+            var outAudioLine = ""
+            var inVideoLine = ""
+            var inAudioLine = ""
+
+            stats.values.forEach { s ->
+                when (s.type) {
+                    "outbound-rtp" -> {
+                        val kind = s.members["kind"] as? String
+                        val br = (s.members["bytesSent"] as? Number)?.toDouble()
+                        val ts = (s.members["timestamp"] as? Number)?.toDouble()
+                        val fps = (s.members["framesPerSecond"] as? Number)?.toDouble()
+                        val brKbps = if (br != null && ts != null) (br / 1000.0) else 0.0
+                        if (kind == "video") outVideoLine = "OUT video≈${brKbps.toInt()} kB sent fps=${fps ?: "?"}"
+                        if (kind == "audio") outAudioLine = "OUT audio≈${brKbps.toInt()} kB sent"
+                    }
+                    "inbound-rtp" -> {
+                        val kind = s.members["kind"] as? String
+                        val br = (s.members["bytesReceived"] as? Number)?.toDouble()
+                        val loss = (s.members["packetsLost"] as? Number)?.toInt()
+                        val jitter = (s.members["jitter"] as? Number)?.toDouble()
+                        val brKbps = if (br != null) (br / 1000.0) else 0.0
+                        if (kind == "video")
+                            inVideoLine = "IN video≈${brKbps.toInt()} kB recv loss=${loss ?: 0} jitter=${"%.3f".format(jitter ?: 0.0)}"
+                        if (kind == "audio")
+                            inAudioLine = "IN audio≈${brKbps.toInt()} kB recv loss=${loss ?: 0} jitter=${"%.3f".format(jitter ?: 0.0)}"
+                    }
+                }
+            }
+
+            val summary = listOf(pairLine, topoLine, outVideoLine, outAudioLine, inVideoLine, inAudioLine)
+                .filter { it.isNotBlank() }
+                .joinToString(" | ")
+
+            onSummary(summary)
+        }
+    }
 }
