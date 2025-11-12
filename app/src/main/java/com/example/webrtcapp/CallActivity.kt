@@ -117,6 +117,9 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
     private var locallyHungUp = false
     private var remoteCallEnded = false
 
+    private var reconnectTimeoutRunnable: Runnable? = null
+    private val reconnectTimeoutMs: Long = 60_000L // 60s, tweak as you like
+
     // Permissions
     private val requestPerms =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
@@ -750,14 +753,43 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
             reconnectChip.text = if (everConnected) "Reconnecting…" else "Connecting…"
             reconnectChip.visibility = View.VISIBLE
             setQualityColor(R.color.md_amber_500)
+
+            // Only enforce a timeout once we’ve had a real call going.
+            if (everConnected) {
+                scheduleReconnectTimeout()
+            }
         } else {
             reconnectChip.visibility = View.GONE
+            cancelReconnectTimeout()
         }
     }
 
     private fun cancelPendingIceRestart() {
         pendingRestart?.let { reconHandler.removeCallbacks(it) }
         pendingRestart = null
+    }
+
+    private fun scheduleReconnectTimeout() {
+        cancelReconnectTimeout() // don’t stack multiple
+
+        reconnectTimeoutRunnable = Runnable {
+            // Only fire if we’re still in a “reconnecting-ish” ICE state
+            if (reconnectUiShown &&
+                (lastIceState == PeerConnection.IceConnectionState.DISCONNECTED ||
+                        lastIceState == PeerConnection.IceConnectionState.FAILED)) {
+
+                // This will:
+                // 1) write status="ended", endedReason="reconnect_timeout"
+                // 2) close local PeerConnection + Activity
+                // 3) make the remote peer leave due to the Firestore listener above
+                hangup("reconnect_timeout")
+            }
+        }.also { uiHandler.postDelayed(it, reconnectTimeoutMs) }
+    }
+
+    private fun cancelReconnectTimeout() {
+        reconnectTimeoutRunnable?.let { uiHandler.removeCallbacks(it) }
+        reconnectTimeoutRunnable = null
     }
 
     private fun onNetworkMaybeChanged(source: String) {
