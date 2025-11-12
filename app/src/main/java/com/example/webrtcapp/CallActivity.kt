@@ -15,7 +15,6 @@ import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.ListenerRegistration
 import org.webrtc.IceCandidate
 import org.webrtc.PeerConnection
-import org.webrtc.SessionDescription
 import org.webrtc.SurfaceViewRenderer
 import org.webrtc.VideoTrack
 import android.util.Log
@@ -29,7 +28,13 @@ import android.widget.Chronometer
 import com.google.firebase.firestore.FirebaseFirestore
 import android.content.res.ColorStateList
 import androidx.core.content.ContextCompat
-import com.example.webrtcapp.App
+
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
+import android.os.SystemClock
 
  //PAIR=CPQVYTMNkm_i9EyY+wr rtt=0.470s outKbps=303 | LOCAL[relay/udp] REMOTE[relay/udp] | OUT audio≈0 kB sent | IN audio≈3 kB recv loss=0 jitter=0.019
 
@@ -87,8 +92,8 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
     private var answerListener: ListenerRegistration? = null
     private var remoteCandsListener: ListenerRegistration? = null
 
-    private var didSetRemoteOffer = false
-    private var didSetRemoteAnswer = false
+    private var lastSeenOfferSdp: String? = null
+    private var lastSeenAnswerSdp: String? = null
 
     // Args + state
     private lateinit var callId: String
@@ -96,6 +101,21 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
     private var isFront = true
     private var isCameraEnabled = true
     private var isMicEnabled = true
+
+
+    private lateinit var reconnectChip: TextView
+
+    private lateinit var connectivityManager: ConnectivityManager
+    private var netCallback: ConnectivityManager.NetworkCallback? = null
+
+    private val reconHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private var pendingRestart: Runnable? = null
+    private var lastRestartAtMs: Long = 0L
+    private var reconnectUiShown = false
+    private var everConnected = false
+
+    private var locallyHungUp = false
+    private var remoteCallEnded = false
 
     // Permissions
     private val requestPerms =
@@ -153,7 +173,58 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
                     else -> "Peer"
                 }
                 remoteNameText.text = remoteDisplayName
+
+                val status = snap?.getString("status")
+                val endedReason = snap?.getString("endedReason")
+
+                if (status == "ended") {
+                    // Mark that the call is logically over
+                    remoteCallEnded = true
+
+                    cancelPendingIceRestart()
+                    setReconnectingUI(false)
+                    stopStatsLogging()
+                    stopTimerIfRunning()
+
+                    // If WE didn’t hang up, this means the OTHER side ended the call
+                    if (!locallyHungUp && !isFinishing && !isDestroyed) {
+                        // (Optional) show a toast/snackbar if you like:
+                        // Toast.makeText(this, "Call ended", Toast.LENGTH_SHORT).show()
+                        finish()
+                    }
+
+                    // No need to process restartBy etc once call is over
+                    return@addSnapshotListener
+                }
+
+                // Callee can request caller to restart ICE
+                val restartBy = (snap?.get("restartBy") as? String)
+                if (role == "caller" && restartBy == "callee") {
+                    scheduleIceRestartIfCaller(delayMs = 0L, reason = "remote_request")
+                    // clear the flag (best-effort)
+                    snap.reference.update(mapOf("restartBy" to null))
+                }
             }
+
+
+        reconnectChip = findViewById(R.id.reconnectChip)
+
+        connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val req = NetworkRequest.Builder()
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            .build()
+        netCallback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                onNetworkMaybeChanged("available")
+            }
+            override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
+                onNetworkMaybeChanged("caps")
+            }
+            override fun onLost(network: Network) {
+                // Do nothing; we show reconnect UI via ICE states.
+            }
+        }
+        connectivityManager.registerNetworkCallback(req, netCallback!!)
 
         val controls = findViewById<androidx.constraintlayout.widget.ConstraintLayout>(R.id.callControls)
         ViewCompat.setOnApplyWindowInsetsListener(controls) { v, insets ->
@@ -275,33 +346,48 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
                     runOnUiThread {
                         lastIceState = state
 
-                        // color the dot (keep your colors)
+                        if (remoteCallEnded || locallyHungUp) {
+                            return@runOnUiThread
+                        }
+
                         when (state) {
-                            PeerConnection.IceConnectionState.NEW,
-                            PeerConnection.IceConnectionState.CHECKING  -> setQualityColor(R.color.md_amber_500)
+                            PeerConnection.IceConnectionState.NEW -> {
+                                setQualityColor(R.color.md_grey_500)
+                                setReconnectingUI(false)
+                            }
+                            PeerConnection.IceConnectionState.CHECKING -> {
+                                setQualityColor(R.color.md_amber_500)
+                                setReconnectingUI(everConnected) // NEW: show chip only after we’ve ever been connected
+                            }
                             PeerConnection.IceConnectionState.CONNECTED,
-                            PeerConnection.IceConnectionState.COMPLETED -> setQualityColor(R.color.md_green_500)
-                            PeerConnection.IceConnectionState.DISCONNECTED -> setQualityColor(R.color.md_red_400)
-                            PeerConnection.IceConnectionState.FAILED,
-                            PeerConnection.IceConnectionState.CLOSED -> setQualityColor(R.color.md_red_500)
-                            else -> setQualityColor(R.color.md_grey_500)
-                        }
-
-                        // start/stop the timer as you already do
-                        if (state == PeerConnection.IceConnectionState.CONNECTED ||
-                            state == PeerConnection.IceConnectionState.COMPLETED) {
-                            cancelFinishOnRed()
-                            maybeStartTimer()
-                            startStatsLogging()
-                        }
-
-                        // When we turn "red", schedule finishing the Activity
-                        if (state == PeerConnection.IceConnectionState.DISCONNECTED ||
-                            state == PeerConnection.IceConnectionState.FAILED ||
-                            state == PeerConnection.IceConnectionState.CLOSED) {
-                            stopTimerIfRunning()
-                            scheduleFinishOnRed()
-                            stopStatsLogging()
+                            PeerConnection.IceConnectionState.COMPLETED -> {
+                                everConnected = true // NEW
+                                setQualityColor(R.color.md_green_500)
+                                setReconnectingUI(false)
+                                cancelPendingIceRestart()
+                                cancelFinishOnRed()
+                                maybeStartTimer()
+                                startStatsLogging()
+                            }
+                            PeerConnection.IceConnectionState.DISCONNECTED -> {
+                                setReconnectingUI(true)
+                                scheduleIceRestartIfCaller(delayMs = 10_000L, reason = "ice_disconnected")
+                            }
+                            PeerConnection.IceConnectionState.FAILED -> {
+                                setReconnectingUI(true)
+                                scheduleIceRestartIfCaller(delayMs = 0L, reason = "ice_failed")
+                            }
+                            PeerConnection.IceConnectionState.CLOSED -> {
+                                setReconnectingUI(false)
+                                setQualityColor(R.color.md_red_500)
+                                stopTimerIfRunning()
+                                stopStatsLogging()
+                                if (!isFinishing && !isDestroyed) finish()
+                            }
+                            else -> {
+                                setQualityColor(R.color.md_grey_500)
+                                setReconnectingUI(false)
+                            }
                         }
                     }
                 }
@@ -358,6 +444,8 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
         remoteCandsListener?.remove(); remoteCandsListener = null
         rtcClient.close()
         previewController.release()
+        netCallback?.let { runCatching { connectivityManager.unregisterNetworkCallback(it) } }
+        netCallback = null
         try { pipRenderer.release() } catch (_: Throwable) {}
     }
 
@@ -456,26 +544,29 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
 
         // 3) WebRTC offer flow
         rtcClient.ensureRecvTransceivers()
+        // In startAsCaller(...)
         rtcClient.createLocalOfferAndSet(
             onSuccess = { offer ->
                 repo.setOffer(callId, offer)
 
-                answerListener = repo.listenAnswer(
-                    callId,
-                    onAnswer = { answer ->
-                        if (didSetRemoteAnswer) return@listenAnswer
-                        didSetRemoteAnswer = true
+                // (Re)listen for answers for the whole call
+                if (answerListener == null) {
+                    answerListener = repo.listenAnswer(
+                        callId,
+                        onAnswer = { answer ->
+                            // NEW: skip only if byte-for-byte identical to what we already applied
+                            if (answer.description == lastSeenAnswerSdp) return@listenAnswer
+                            lastSeenAnswerSdp = answer.description
 
-                        rtcClient.setRemoteAnswer(
-                            answer,
-                            onComplete = {
-                                answerListener?.remove(); answerListener = null
-                            },
-                            onError = { /* log if needed */ }
-                        )
-                    },
-                    onError = { e -> logIndexHint(e) }
-                )
+                            rtcClient.setRemoteAnswer(
+                                answer,
+                                onComplete = { /* keep listener for future re-answers */ },
+                                onError = { /* log if needed */ }
+                            )
+                        },
+                        onError = { e -> logIndexHint(e) }
+                    )
+                }
             },
             onError = { e -> runOnUiThread { logIndexHint(e) } }
         )
@@ -492,25 +583,27 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
     private fun startAsCallee(me: CallRepository.Participant) {
         repo.joinCall(callId, me)
 
-        offerListener = repo.listenOffer(
-            callId,
-            onOffer = { offer ->
-                if (didSetRemoteOffer) return@listenOffer  // guard duplicate
-                didSetRemoteOffer = true
+        if (offerListener == null) {
+            offerListener = repo.listenOffer(
+                callId,
+                onOffer = { offer ->
+                    // NEW: skip only if identical to last applied offer
+                    if (offer.description == lastSeenOfferSdp) return@listenOffer
+                    lastSeenOfferSdp = offer.description
 
-                rtcClient.ensureRecvTransceivers()
-                rtcClient.setRemoteOfferAndCreateLocalAnswer(
-                    offer = offer,
-                    onSuccess = { answer ->
-                        repo.setAnswer(callId, answer)
-                        offerListener?.remove(); offerListener = null
-                    },
-                    onError = { e ->
-                    }
-                )
-            },
-            onError = { e -> logIndexHint(e) }
-        )
+                    rtcClient.ensureRecvTransceivers()
+                    rtcClient.setRemoteOfferAndCreateLocalAnswer(
+                        offer = offer,
+                        onSuccess = { answer ->
+                            repo.setAnswer(callId, answer)
+                            // Keep offerListener active for future re-offers
+                        },
+                        onError = { /* log if needed */ }
+                    )
+                },
+                onError = { e -> logIndexHint(e) }
+            )
+        }
 
         remoteCandsListener = repo.listenRemoteCandidates(
             callId,
@@ -545,6 +638,8 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
     // ---------- hangup ----------
 
     private fun hangup(reason: String?) {
+
+        locallyHungUp = true
 
         stopTimerIfRunning()
 
@@ -649,6 +744,66 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
             .start()
     }
 
+    private fun setReconnectingUI(active: Boolean) {
+        reconnectUiShown = active
+        if (active) {
+            reconnectChip.text = if (everConnected) "Reconnecting…" else "Connecting…"
+            reconnectChip.visibility = View.VISIBLE
+            setQualityColor(R.color.md_amber_500)
+        } else {
+            reconnectChip.visibility = View.GONE
+        }
+    }
+
+    private fun cancelPendingIceRestart() {
+        pendingRestart?.let { reconHandler.removeCallbacks(it) }
+        pendingRestart = null
+    }
+
+    private fun onNetworkMaybeChanged(source: String) {
+        if (role == "caller") {
+            scheduleIceRestartIfCaller(delayMs = 1_000L, reason = "net_$source")
+        } else {
+            // Politely ask caller to drive the restart to avoid glare
+            try {
+                FirebaseFirestore.getInstance()
+                    .collection("calls")
+                    .document(callId)
+                    .update("restartBy", "callee")
+            } catch (_: Throwable) { /* best-effort */ }
+        }
+    }
+
+    private fun scheduleIceRestartIfCaller(delayMs: Long, reason: String) {
+        if (role != "caller") return
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastRestartAtMs < 8_000L) return  // debounce
+
+        cancelPendingIceRestart()
+        pendingRestart = Runnable {
+            val sig = rtcClient.signalingState()
+            if (sig == PeerConnection.SignalingState.STABLE ||
+                sig == PeerConnection.SignalingState.HAVE_LOCAL_OFFER) {
+                tryIceRestart(reason)
+            } else {
+                // wait until stable
+                scheduleIceRestartIfCaller(delayMs = 1500L, reason = "wait_$reason")
+            }
+        }.also { reconHandler.postDelayed(it, delayMs) }
+    }
+
+    private fun tryIceRestart(reason: String) {
+        lastRestartAtMs = SystemClock.elapsedRealtime()
+        android.util.Log.d("RTC-RESTART", "Trigger ICE restart ($reason)")
+        rtcClient.createIceRestartOfferAndSet(
+            onSuccess = { offer -> repo.setOffer(callId, offer) },
+            onError = { e ->
+                android.util.Log.e("RTC-RESTART", "ICE restart offer failed: ${e.message}", e)
+                scheduleIceRestartIfCaller(delayMs = 4000L, reason = "retry_after_error")
+            }
+        )
+    }
+
     private fun swapPrimaryAndPip() {
         primaryShowsRemote = !primaryShowsRemote
 
@@ -691,26 +846,6 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
     private fun setQualityColor(@androidx.annotation.ColorRes colorRes: Int) {
         val color = ContextCompat.getColor(this, colorRes)
         ViewCompat.setBackgroundTintList(qualityDot, ColorStateList.valueOf(color))
-    }
-
-    private fun scheduleFinishOnRed(delayMs: Long = 1200L) {
-        cancelFinishOnRed()
-        finishOnRedRunnable = Runnable {
-            // Only finish if we're still "red"
-            if (lastIceState == PeerConnection.IceConnectionState.DISCONNECTED ||
-                lastIceState == PeerConnection.IceConnectionState.FAILED ||
-                lastIceState == PeerConnection.IceConnectionState.CLOSED) {
-                // Do not write anything to Firestore; just close locally
-                stopTimerIfRunning()
-                try { offerListener?.remove() } catch (_: Throwable) {}
-                try { answerListener?.remove() } catch (_: Throwable) {}
-                try { remoteCandsListener?.remove() } catch (_: Throwable) {}
-                rtcClient.close()
-                previewController.stop()
-                audioController.stop()
-                if (!isFinishing && !isDestroyed) finish()
-            }
-        }.also { uiHandler.postDelayed(it, delayMs) }
     }
 
     private fun cancelFinishOnRed() {

@@ -254,6 +254,33 @@ class RtcClient(
     private fun offerConstraints(): MediaConstraints = MediaConstraints()
     private fun answerConstraints(): MediaConstraints = MediaConstraints()
 
+    fun signalingState(): PeerConnection.SignalingState = peerConnection.signalingState()
+
+    fun createIceRestartOfferAndSet(
+        onSuccess: (SessionDescription) -> Unit,
+        onError: (Throwable) -> Unit
+    ) {
+        val c = MediaConstraints().apply {
+            // The magic bit that rotates ICE ufrag/pwd
+            mandatory.add(MediaConstraints.KeyValuePair("IceRestart", "true"))
+        }
+        peerConnection.createOffer(
+            object : SdpObserverAdapter(
+                onCreate = { sdp ->
+                    peerConnection.setLocalDescription(
+                        object : SdpObserverAdapter(
+                            onSet = { onSuccess(sdp) },
+                            onError = onError
+                        ) {},
+                        sdp
+                    )
+                },
+                onError = onError
+            ) {},
+            c
+        )
+    }
+
     private open class SdpObserverAdapter(
         private val onCreate: ((SessionDescription) -> Unit)? = null,
         private val onSet: (() -> Unit)? = null,
