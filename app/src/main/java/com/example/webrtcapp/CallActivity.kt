@@ -31,7 +31,7 @@ import android.content.res.ColorStateList
 import androidx.core.content.ContextCompat
 import com.example.webrtcapp.App
 
-
+ //PAIR=CPQVYTMNkm_i9EyY+wr rtt=0.470s outKbps=303 | LOCAL[relay/udp] REMOTE[relay/udp] | OUT audio≈0 kB sent | IN audio≈3 kB recv loss=0 jitter=0.019
 
 class CallActivity : androidx.appcompat.app.AppCompatActivity() {
 
@@ -196,20 +196,25 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
 
         // PeerConnection
         val iceServers = listOf(
-            PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer()
-            // add more STUN endpoints if you want:
-            // PeerConnection.IceServer.builder("stun:global.stun.twilio.com:3478").createIceServer()
+            // keep STUN if you want, but RELAY will ignore it for selected pair anyway
+            PeerConnection.IceServer.builder(listOf(
+                "turn:relay1.expressturn.com:3478?transport=udp",
+                "turn:relay1.expressturn.com:3478?transport=tcp",
+                "turns:relay1.expressturn.com:5349?transport=tcp"   // TLS
+            ))
+                .setUsername("000000002078326873")
+                .setPassword("/JXmi8Y+ANFcbxLNK0GzZQVQJUI=")
+                .createIceServer()
         )
 
         val rtcConfig = PeerConnection.RTCConfiguration(iceServers).apply {
             sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
             continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUALLY
 
-            // 🔒 Block HOST candidates; keep srflx (from STUN). No TURN since we didn’t configure any.
-            iceTransportsType = PeerConnection.IceTransportsType.NOHOST
-
-            // (optional but recommended) keep it UDP-only and simpler for the experiment
-            tcpCandidatePolicy = PeerConnection.TcpCandidatePolicy.DISABLED
+            iceTransportsType = PeerConnection.IceTransportsType.RELAY   // still TURN-only
+            tcpCandidatePolicy = PeerConnection.TcpCandidatePolicy.ENABLED
+            // optional: faster gathering feel
+            iceCandidatePoolSize = 2
         }
 
         rtcClient = RtcClient(
