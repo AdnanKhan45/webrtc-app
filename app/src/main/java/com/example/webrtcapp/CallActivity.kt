@@ -195,13 +195,19 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
         enablePipDragAndTap()
 
         // PeerConnection
+        // PeerConnection
         val iceServers = listOf(
-            // keep STUN if you want, but RELAY will ignore it for selected pair anyway
-            PeerConnection.IceServer.builder(listOf(
-                "turn:relay1.expressturn.com:3478?transport=udp",
-                "turn:relay1.expressturn.com:3478?transport=tcp",
-                "turns:relay1.expressturn.com:5349?transport=tcp"   // TLS
-            ))
+            // STUN (for srflx)
+            PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer(),
+
+            // TURN (offer UDP, TCP, and TLS so relay works in more networks)
+            PeerConnection.IceServer.builder(
+                listOf(
+                    "turn:relay1.expressturn.com:3478?transport=udp",
+                    "turn:relay1.expressturn.com:3478?transport=tcp",
+                    "turns:relay1.expressturn.com:5349?transport=tcp" // TLS on 5349
+                )
+            )
                 .setUsername("000000002078326873")
                 .setPassword("/JXmi8Y+ANFcbxLNK0GzZQVQJUI=")
                 .createIceServer()
@@ -211,9 +217,14 @@ class CallActivity : androidx.appcompat.app.AppCompatActivity() {
             sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
             continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUALLY
 
-            iceTransportsType = PeerConnection.IceTransportsType.RELAY   // still TURN-only
+            // Allow all candidate types (host, srflx, relay). This is the default,
+            // but we set it explicitly for clarity.
+            iceTransportsType = PeerConnection.IceTransportsType.ALL
+
+            // Don’t disable TCP; some networks need TURN over TCP/TLS.
             tcpCandidatePolicy = PeerConnection.TcpCandidatePolicy.ENABLED
-            // optional: faster gathering feel
+
+            // Optional: speed up feeling of first ICE checks
             iceCandidatePoolSize = 2
         }
 
