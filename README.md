@@ -49,10 +49,6 @@ app/
 
 ```
 
-## Contributing
-
-This plugin is in early development. Feel free to open issues or submit pull requests on [GitHub](https://github.com/your-repo/flutter_voice_engine)!
-
 ## License
 
 MIT License. See [LICENSE](LICENSE) for details.
